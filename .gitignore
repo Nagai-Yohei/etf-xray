@@ -1,0 +1,49 @@
+# 環境変数・秘密情報（テンプレートの .env.example のみ許可）
+.env
+.env.*
+!.env.example
+
+# 秘密鍵・証明書
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.jks
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# ローカルデータ・SQLite DB・公開用ビルド成果物
+data/
+dist/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Python 仮想環境・キャッシュ
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# デプロイ・ログ・OS・エディタ一時ファイル
+.wrangler/
+*.log
+.DS_Store
+._*
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
