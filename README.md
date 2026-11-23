@@ -114,3 +114,10 @@ Only the built `dist/` directory is published (`data/` and `.env` are gitignored
 ## Data Sources & Disclaimer
 
 All figures are programmatically compiled from public SEC EDGAR filings and OpenFIGI metadata. Quarter-end share prices are implied from reported ETF holding market values divided by share counts (`value_usd / shares`). This project is for informational purposes only and does not constitute investment advice.
+
+---
+
+## License
+
+[MIT](LICENSE)
+
