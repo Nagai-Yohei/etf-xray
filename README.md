@@ -26,13 +26,13 @@ Set `SEC_USER_AGENT` in `.env` to your app/name and contact email per SEC EDGAR 
 
 ## Usage
 
-```bash
-./run.sh build                     # Fetch SEC filings -> XBRL -> metrics -> export dist/
+```
+./run.sh build                      # Fetch SEC filings -> XBRL -> metrics -> export dist/
 ./run.sh build --skip-etf --offline # Fast offline rebuild from local cache
-./run.sh export                    # Re-export dist/ from existing SQLite DB
-./run.sh check                     # Run data integrity checks and secret/PII scan
-./run.sh serve                     # Preview dist/ locally at http://127.0.0.1:8787/
-./run.sh deploy                    # Upload dist/ to Cloudflare Pages via Direct Upload API
+./run.sh export                     # Re-export dist/ from existing SQLite DB
+./run.sh check                      # Run data integrity checks and secret/PII scan
+./run.sh serve                      # Preview dist/ locally at http://127.0.0.1:8787/
+./run.sh deploy                     # Upload dist/ to Cloudflare Pages via Direct Upload API
 ```
 
 ## Overview
