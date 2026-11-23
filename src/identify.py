@@ -386,6 +386,35 @@ def resolve_all_filings(
         if len(tset) > 1:
             nport_name_bridge.pop(nk, None)
 
+    # Build a collision-free spaceless bridge (recovers legacy PDF-to-HTML dropped spaces, e.g. "3MCo.", "SyscoCorp.")
+    spaceless_bridge: dict[str, tuple[str, str | None, str | None, str | None, str]] = {}
+    spaceless_tickers: dict[str, set[str]] = {}
+
+    def _register_spaceless(
+        raw_key: str,
+        tkr: str,
+        b_cusip: str | None,
+        b_isin: str | None,
+        b_cik: str | None,
+        src_label: str,
+    ) -> None:
+        sk = raw_key.replace(" ", "")
+        if len(sk) < 4:
+            return
+        spaceless_tickers.setdefault(sk, set()).add(tkr)
+        if sk not in spaceless_bridge:
+            spaceless_bridge[sk] = (tkr, b_cusip, b_isin, b_cik, src_label)
+
+    for nk, (tkr, b_cusip, b_isin) in nport_name_bridge.items():
+        _register_spaceless(nk, tkr, b_cusip, b_isin, None, "legacy_bridge")
+    for nk, tkr in manual_norm_name.items():
+        _register_spaceless(nk, tkr, None, None, None, "manual_name")
+    for nk, (tkr, b_cik) in sec_name_map.items():
+        _register_spaceless(nk, tkr, None, None, b_cik, "sec_name")
+    for sk, tset in spaceless_tickers.items():
+        if len(tset) > 1:
+            spaceless_bridge.pop(sk, None)
+
     # 3. Pass 2: Resolve every holding across all reporting dates following priority order
     resolved_by_as_of: dict[str, list[ResolvedHolding]] = {}
     securities_catalog: dict[str, dict[str, Any]] = {}
@@ -486,6 +515,24 @@ def resolve_all_filings(
                         if nk in sec_name_map:
                             ticker, cik = sec_name_map[nk]
                             source = "sec_name"
+                            break
+                    if ticker is not None:
+                        break
+
+            # Priority 6: Unambiguous spaceless match for legacy filings (recovers dropped spaces like "3MCo.")
+            if ticker is None and not cusip and not isin:
+                for strip_class in (False, True):
+                    for strip_corp in (False, True):
+                        sk = normalize_company_name(
+                            h.reported_name, strip_corp=strip_corp, strip_class=strip_class
+                        ).replace(" ", "")
+                        if sk in spaceless_bridge:
+                            b_tkr, b_cusip, b_isin, b_cik, b_src = spaceless_bridge[sk]
+                            ticker = b_tkr
+                            cusip = cusip or b_cusip
+                            isin = isin or b_isin
+                            cik = cik or b_cik
+                            source = b_src
                             break
                     if ticker is not None:
                         break
