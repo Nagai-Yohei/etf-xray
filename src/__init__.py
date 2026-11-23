@@ -1,1 +1,1 @@
-"""etf-xray パイプラインパッケージ。"""
+"""etf-xray data pipeline package."""

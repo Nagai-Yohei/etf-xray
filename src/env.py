@@ -1,8 +1,8 @@
-"""環境変数読み込みおよびプロジェクト共通パスの定義。
+"""Environment variable loader and shared project path definitions.
 
-セキュリティ原則:
-- .env の中身を画面表示・ログ出力・ファイル転記しない。
-- SEC_USER_AGENT の実値を例外メッセージに含めない。
+Security principles:
+- Never print, log, or copy the contents of .env.
+- Never include raw SEC_USER_AGENT values in exception messages.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _strip_quotes(value: str) -> str:
 
 
 def parse_dotenv_file(path: Path = ENV_PATH) -> dict[str, str]:
-    """ローカル .env ファイルを辞書として読み込む（外部出力禁止）。"""
+    """Load the local .env file into a dict (never emit externally)."""
     result: dict[str, str] = {}
     if not path.is_file():
         return result
@@ -51,13 +51,13 @@ def parse_dotenv_file(path: Path = ENV_PATH) -> dict[str, str]:
 
 
 def load_dotenv(path: Path = ENV_PATH) -> None:
-    """未設定の環境変数のみ .env から読み込む。"""
+    """Populate unset environment variables from .env."""
     for key, val in parse_dotenv_file(path).items():
         os.environ.setdefault(key, val)
 
 
 def get_sec_user_agent() -> str:
-    """SEC EDGAR 用の User-Agent を返す。未設定またはダミー値なら例外で停止する。"""
+    """Return the SEC EDGAR User-Agent; fail fast if unset or a placeholder."""
     load_dotenv()
     ua = os.environ.get("SEC_USER_AGENT", "").strip()
     if not ua or len(ua) < 6 or _DUMMY_UA_PATTERN.search(ua):
@@ -69,7 +69,7 @@ def get_sec_user_agent() -> str:
 
 
 def get_openfigi_api_key() -> str | None:
-    """OpenFIGI API キーを返す（未設定の場合は None）。"""
+    """Return the OpenFIGI API key if configured, or None."""
     load_dotenv()
     key = os.environ.get("OPENFIGI_API_KEY", "").strip()
     return key or None

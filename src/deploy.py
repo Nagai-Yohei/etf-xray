@@ -1,17 +1,17 @@
-"""Cloudflare Pages Direct Upload デプロイスクリプト（Node.js / wrangler 不要・Pure Python）。
+"""Cloudflare Pages Direct Upload deployment script (Pure Python; no Node.js or wrangler).
 
-実行例:
-    python -m src.deploy             # check.py 実行 → dist/ を Cloudflare Pages へ差分アップロード
-    python -m src.deploy --dry-run   # 事前検証とファイル集計のみ（外部通信なし）
+Examples:
+    python -m src.deploy             # Run src.check -> differentially upload dist/ to Cloudflare Pages
+    python -m src.deploy --dry-run   # Pre-flight validation and asset summary only (no network)
 
-必要な環境変数（.env に記載、Git 除外済み）:
-    CLOUDFLARE_API_TOKEN     Cloudflare API トークン（権限: Account / Cloudflare Pages: Edit のみ）
-    CLOUDFLARE_ACCOUNT_ID    Cloudflare アカウント ID（32桁の16進文字列）
-    CLOUDFLARE_PAGES_PROJECT 対象プロジェクト名（省略時: etf-xray）
+Required environment variables (set in .env, gitignored):
+    CLOUDFLARE_API_TOKEN     Cloudflare API token (permission: Account / Cloudflare Pages: Edit only)
+    CLOUDFLARE_ACCOUNT_ID    Cloudflare account ID (32-character hex string)
+    CLOUDFLARE_PAGES_PROJECT Target project name (default: etf-xray)
 
-セキュリティ原則:
-- トークン・JWT・アカウント ID の実値は一切ログ出力や例外メッセージに含めない。
-- デプロイ前に必ず src.check を実行し、秘密情報流出・データ破損がないことを確認する。
+Security principles:
+- Never log or include raw tokens, JWTs, or account IDs in output or exception messages.
+- Always run src.check before deploying to prevent secret leaks or corrupted data.
 """
 
 from __future__ import annotations
@@ -35,11 +35,11 @@ from src.env import DIST_DIR, load_dotenv
 
 CF_API_BASE = "https://api.cloudflare.com/client/v4"
 DEFAULT_PROJECT_NAME = "etf-xray"
-# 1 バッチあたりの最大サイズ・ファイル数（Cloudflare 制限に対し安全マージンを確保）
+# Max size and file count per upload batch (conservative safety margin under Cloudflare limits)
 MAX_BATCH_BYTES = 8 * 1024 * 1024
 MAX_BATCH_FILES = 150
 MAX_FILE_BYTES = 25 * 1024 * 1024
-# Cloudflare Pages の特殊設定ファイル（manifest ではなく multipart 別フィールドで送信）
+# Cloudflare Pages special config files (sent as multipart fields instead of the asset manifest)
 SPECIAL_CONFIG_FILES = {"_headers", "_redirects"}
 IGNORED_FILENAMES = {".DS_Store", "Thumbs.db"}
 
@@ -63,13 +63,13 @@ EXTRA_MIME_TYPES = {
 
 @dataclass
 class AssetFile:
-    """アップロード対象の静的アセット 1 ファイル。"""
+    """Single static asset file staged for upload."""
 
-    rel_url: str  # 例: "/index.html"
+    rel_url: str  # e.g. "/index.html"
     path: Path
     size: int
     content_type: str
-    content_hash: str  # 32文字小文字16進ハッシュ
+    content_hash: str  # 32-char lowercase hex hash
 
 
 def _guess_content_type(path: Path) -> str:
@@ -81,14 +81,14 @@ def _guess_content_type(path: Path) -> str:
 
 
 def _compute_asset_hash(raw_bytes: bytes, ext_without_dot: str) -> str:
-    """Wrangler 互換形式（base64 + 拡張子）から 32 桁の決定的なコンテンツハッシュを生成する。"""
+    """Compute a deterministic 32-char Wrangler-compatible content hash (base64 + extension)."""
     b64_text = base64.b64encode(raw_bytes).decode("ascii")
     payload = (b64_text + ext_without_dot).encode("utf-8")
     return hashlib.blake2b(payload, digest_size=16).hexdigest()
 
 
 def collect_dist_files(dist_dir: Path = DIST_DIR) -> tuple[list[AssetFile], dict[str, bytes]]:
-    """dist/ 配下の静的ファイルと特殊設定ファイル（_headers 等）を収集する。"""
+    """Collect static assets and special config files (e.g. _headers) under dist/."""
     if not dist_dir.is_dir():
         raise RuntimeError(f"dist directory not found: {dist_dir}")
 
@@ -135,7 +135,7 @@ def collect_dist_files(dist_dir: Path = DIST_DIR) -> tuple[list[AssetFile], dict
 
 
 def _load_cf_config() -> tuple[str, str, str]:
-    """環境変数 / .env から Cloudflare 設定を読み込む（値はログ出力しない）。"""
+    """Load Cloudflare settings from environment variables / .env (never log values)."""
     load_dotenv()
     token = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
@@ -170,7 +170,7 @@ def _cf_request(
     timeout: int = 120,
     max_retries: int = 4,
 ) -> dict[str, Any]:
-    """Cloudflare API へリトライ付きでリクエストし、result を含む JSON を返す。"""
+    """Send a Cloudflare API request with retries and return the JSON payload."""
     headers = {"Authorization": f"Bearer {bearer_token}"}
     if json_body is not None:
         headers["Content-Type"] = "application/json"
@@ -251,7 +251,7 @@ def _upload_missing_assets(
     jwt: str,
     missing_assets: list[AssetFile],
 ) -> str:
-    """未登録アセットをバッチ分割してアップロードする（JWT 期限対策で必要時に再取得）。"""
+    """Upload missing assets in batches (refreshing upload JWT if it expires)."""
     url = f"{CF_API_BASE}/pages/assets/upload"
     batches: list[list[AssetFile]] = []
     cur_batch: list[AssetFile] = []
@@ -283,7 +283,7 @@ def _upload_missing_assets(
         try:
             _cf_request(session, "POST", url, jwt, json_body=payload, timeout=180)
         except RuntimeError as exc:
-            # 長時間アップロードで JWT 失効した場合は一度だけ再取得してリトライ
+            # Refresh JWT once and retry if a long upload causes token expiration
             if "401" in str(exc) or "403" in str(exc) or "8000013" in str(exc):
                 jwt = _get_upload_jwt(session, api_token, account_id, project)
                 _cf_request(session, "POST", url, jwt, json_body=payload, timeout=180)
@@ -340,7 +340,7 @@ def deploy(dry_run: bool = False, skip_check: bool = False) -> int:
     assets, special_files = collect_dist_files()
     total_bytes = sum(a.size for a in assets) + sum(len(b) for b in special_files.values())
 
-    # 同一内容ファイルの重複アップロードを防ぐためハッシュ単位で一意化
+    # Deduplicate by content hash to avoid uploading identical files multiple times
     unique_by_hash: dict[str, AssetFile] = {}
     manifest: dict[str, str] = {}
     for a in assets:

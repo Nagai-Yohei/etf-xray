@@ -1,13 +1,15 @@
 /**
- * SPA エントリポイント・ハッシュルーター・グローバル銘柄検索。
- * ルート:
- *   #/etf/<ETF_ID>
- *   #/stock/<SECURITY_ID>
+ * SPA entry point, hash router, and global stock search.
+ * Routes:
+ *   #/                  (Home overview)
+ *   #/etf/<ETF_ID>      (ETF holdings & history view)
+ *   #/stock/<SECURITY_ID> (Individual stock fundamentals view)
  */
 
 import { getMeta, getStocksIndex } from "./api.js";
 import { clearNode, el, fmtPct } from "./dom.js";
 import { renderEtfView } from "./etf-view.js";
+import { renderHomeView } from "./home-view.js";
 import { renderStockView } from "./stock-view.js";
 
 const rootEl = document.getElementById("app-root");
@@ -36,9 +38,80 @@ if (topbarContext) {
   });
 }
 
+const topbarEl = document.querySelector(".topbar");
+let stickyRaf = 0;
+
+/**
+ * Keep table column headers and the tenure map year header visible below the sticky topbar
+ * even when the outer window scrolls past the top of an overflow-scrollable container.
+ */
+function syncStickyHeaders() {
+  stickyRaf = 0;
+  const topbarBottom = topbarEl ? topbarEl.getBoundingClientRect().bottom : 0;
+
+  for (const wrap of document.querySelectorAll(".table-scroll")) {
+    const table = wrap.querySelector(".data-table");
+    const thead = table?.querySelector("thead");
+    if (!table || !thead) continue;
+    const ths = thead.querySelectorAll("th");
+    if (!ths.length) continue;
+
+    const wrapRect = wrap.getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    const headH = thead.offsetHeight || 34;
+
+    let dy = 0;
+    if (wrapRect.top < topbarBottom && wrapRect.bottom > topbarBottom + headH) {
+      const rawOffset = topbarBottom - wrapRect.top;
+      const visibleBottom = Math.min(wrapRect.bottom, tableRect.bottom);
+      const maxOffset = Math.max(0, visibleBottom - wrapRect.top - headH);
+      dy = Math.min(rawOffset, maxOffset);
+    }
+
+    const transformVal = dy > 0.5 ? `translateY(${Math.round(dy)}px)` : "";
+    const isFloating = dy > 0.5;
+    for (const th of ths) {
+      if (th.style.transform !== transformVal) {
+        th.style.transform = transformVal;
+      }
+      th.classList.toggle("sticky-floating", isFloating);
+    }
+  }
+
+  for (const wrap of document.querySelectorAll(".tenure-canvas-wrap")) {
+    const headerCanvas = wrap.querySelector(".tenure-header-canvas");
+    if (!headerCanvas) continue;
+
+    const wrapRect = wrap.getBoundingClientRect();
+    const headH = headerCanvas.offsetHeight || 28;
+    let dy = 0;
+    if (wrapRect.top < topbarBottom && wrapRect.bottom > topbarBottom + headH) {
+      const rawOffset = topbarBottom - wrapRect.top;
+      const maxOffset = Math.max(0, wrapRect.bottom - wrapRect.top - headH);
+      dy = Math.min(rawOffset, maxOffset);
+    }
+
+    const transformVal = dy > 0.5 ? `translateY(${Math.round(dy)}px)` : "";
+    if (headerCanvas.style.transform !== transformVal) {
+      headerCanvas.style.transform = transformVal;
+    }
+    headerCanvas.classList.toggle("sticky-floating", dy > 0.5);
+  }
+}
+
+function scheduleStickySync() {
+  if (!stickyRaf) {
+    stickyRaf = window.requestAnimationFrame(syncStickyHeaders);
+  }
+}
+
+window.addEventListener("scroll", scheduleStickySync, { passive: true });
+window.addEventListener("resize", scheduleStickySync, { passive: true });
+
 let metaData = null;
 let stocksList = [];
 let currentEtfId = "SCHD";
+let lastBackTarget = null;
 let cleanupView = null;
 
 function navigate(hash) {
@@ -146,26 +219,68 @@ async function handleRoute() {
     cleanupView = null;
   }
 
-  const hash = window.location.hash || `#/etf/${encodeURIComponent(currentEtfId)}`;
-  const [pathPart, queryPart] = hash.replace(/^#\/?/, "").split("?");
+  const rawHash = window.location.hash || "#/";
+  const [pathPart, queryPart] = rawHash.replace(/^#\/?/, "").split("?");
   const parts = pathPart.split("/").filter(Boolean);
   const params = new URLSearchParams(queryPart || "");
 
   try {
-    if (parts[0] === "stock" && parts[1]) {
-      const secId = decodeURIComponent(parts[1]);
-      await renderStockView(rootEl, secId, currentEtfId, setTopbarContext, metaData?.etfs || []);
+    if (parts.length === 0) {
+      etfSwitcher.value = "";
+      lastBackTarget = { href: "#/", label: "← Back to Home" };
+      setTopbarContext(null);
+      document.title = "ETF X-Ray — U.S. ETF Holdings & SEC Fundamentals";
+      cleanupView = await renderHomeView(rootEl, metaData, stocksList, navigate);
       window.scrollTo({ top: 0 });
-    } else {
-      const etfId = parts[0] === "etf" && parts[1] ? decodeURIComponent(parts[1]) : currentEtfId;
+    } else if (parts[0] === "stock" && parts[1]) {
+      const secId = decodeURIComponent(parts[1]);
+      await renderStockView(
+        rootEl,
+        secId,
+        currentEtfId,
+        setTopbarContext,
+        metaData?.etfs || [],
+        lastBackTarget
+      );
+      window.scrollTo({ top: 0 });
+    } else if (parts[0] === "etf") {
+      const etfId = parts[1] ? decodeURIComponent(parts[1]) : currentEtfId;
       const known = metaData.etfs.some((e) => e.etf_id === etfId);
       const targetEtf = known ? etfId : metaData.etfs[0].etf_id;
+      const requestedAsOf = params.get("as_of");
       currentEtfId = targetEtf;
       etfSwitcher.value = targetEtf;
+      lastBackTarget = {
+        href: requestedAsOf
+          ? `#/etf/${encodeURIComponent(targetEtf)}?as_of=${encodeURIComponent(requestedAsOf)}`
+          : `#/etf/${encodeURIComponent(targetEtf)}`,
+        label: requestedAsOf ? `← Back to ${targetEtf} (${requestedAsOf})` : `← Back to ${targetEtf}`,
+      };
       setTopbarContext(null);
       document.title = `${targetEtf} — ETF X-Ray`;
-      cleanupView = await renderEtfView(rootEl, targetEtf, params.get("as_of"), navigate);
+      cleanupView = await renderEtfView(
+        rootEl,
+        targetEtf,
+        requestedAsOf,
+        navigate,
+        (asOf, isLatest) => {
+          lastBackTarget = {
+            href: isLatest
+              ? `#/etf/${encodeURIComponent(targetEtf)}`
+              : `#/etf/${encodeURIComponent(targetEtf)}?as_of=${encodeURIComponent(asOf)}`,
+            label: isLatest ? `← Back to ${targetEtf}` : `← Back to ${targetEtf} (${asOf})`,
+          };
+        }
+      );
+    } else {
+      etfSwitcher.value = "";
+      lastBackTarget = { href: "#/", label: "← Back to Home" };
+      setTopbarContext(null);
+      document.title = "ETF X-Ray — U.S. ETF Holdings & SEC Fundamentals";
+      cleanupView = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      window.scrollTo({ top: 0 });
     }
+    scheduleStickySync();
   } catch (err) {
     setTopbarContext(null);
     clearNode(rootEl);
@@ -185,17 +300,23 @@ async function init() {
     stocksList = Object.values(stocksIndex);
 
     clearNode(etfSwitcher);
+    etfSwitcher.appendChild(el("option", { value: "", text: "All ETFs (Home)" }));
     for (const etf of meta.etfs) {
       etfSwitcher.appendChild(
         el("option", { value: etf.etf_id, text: `${etf.etf_id} — ${etf.name}` })
       );
     }
     if (meta.etfs.length > 0) {
-      currentEtfId = meta.etfs[0].etf_id;
+      currentEtfId = meta.etfs.some((e) => e.etf_id === "SCHD") ? "SCHD" : meta.etfs[0].etf_id;
     }
 
     etfSwitcher.addEventListener("change", (e) => {
-      currentEtfId = e.target.value;
+      const val = e.target.value;
+      if (!val) {
+        navigate("#/");
+        return;
+      }
+      currentEtfId = val;
       navigate(`#/etf/${encodeURIComponent(currentEtfId)}`);
     });
 

@@ -1,6 +1,6 @@
 /**
- * 安全な DOM 操作および数値フォーマッタ。
- * XSS 防止のため、すべてのテキスト描画には textContent / createTextNode のみを使用する。
+ * Safe DOM helpers and numeric formatters.
+ * Uses only textContent / createTextNode for all text rendering to prevent XSS.
  */
 
 export function clearNode(node) {

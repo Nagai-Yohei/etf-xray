@@ -1,18 +1,18 @@
 name,cusip,ticker,note
-Clearway Energy Inc,18539C105,CWEN.A,クラスA（CUSIP指定で上書き）
-United Technologies Corp.,,UTX,2020年にRaytheon Technologiesへ
+Clearway Energy Inc,18539C105,CWEN.A,Class A (CUSIP override)
+United Technologies Corp.,,UTX,Merged into Raytheon Technologies in 2020
 "Polaris Industries, Inc.",,PII,
 "Strayer Education, Inc.",,STRA,
-"Wal-Mart Stores, Inc.",,WMT,2018年にWalmart Inc.へ社名変更
-Walgreen Co.,,WAG,2014年にWalgreens Boots Allianceへ
+"Wal-Mart Stores, Inc.",,WMT,Renamed to Walmart Inc. in 2018
+Walgreen Co.,,WAG,Reorganized into Walgreens Boots Alliance in 2014
 Campbell Soup Co.,,CPB,
-H.J. Heinz Co.,,HNZ,2013年に買収され上場廃止
+H.J. Heinz Co.,,HNZ,Acquired and delisted in 2013
 Universal Corp.,,UVV,
 "Meridian Bioscience, Inc.",,VIVO,
 "Owens & Minor, Inc.",,OMI,
 "Avon Products, Inc.",,AVP,
 Everest Re Group Ltd.,,RE,
-E.I. du Pont de Nemours & Co.,,DD,2017年にDowDuPontへ統合
+E.I. du Pont de Nemours & Co.,,DD,Merged into DowDuPont in 2017
 "Praxair, Inc.",,PX,
 Meredith Corp.,,MDP,
 Linear Technology Corp.,,LLTC,
@@ -29,18 +29,18 @@ Tupperware Brands Corp.,,TUP,
 RadioShack Corp.,,RSH,
 "CA, Inc.",,CA,
 Questar Corp.,,STR,
-Wisconsin Energy Corp.,,WEC,2015年にWEC Energy Groupへ社名変更
-"McGraw Hill Financial, Inc.",,MHFI,2016年にS&P Globalへ社名変更
+Wisconsin Energy Corp.,,WEC,Renamed to WEC Energy Group in 2015
+"McGraw Hill Financial, Inc.",,MHFI,Renamed to S&P Global in 2016
 "The McGraw-Hill Cos., Inc.",,MHP,
 "Diamond Offshore Drilling, Inc.",,DO,
 HollyFrontier Corp.,,HFC,
-"Gannett Co., Inc.",,GCI,2015年にTEGNAへ社名変更（出版部門は分離）
+"Gannett Co., Inc.",,GCI,Renamed to TEGNA in 2015 (publishing spun off)
 "L Brands, Inc.",,LB,
 MTS Systems Corp.,,MTSC,
 R.R. Donnelley & Sons Co.,,RRD,
 International Game Technology,,IGT,
 "Computer Programs & Systems, Inc.",,CPSI,
-The Dow Chemical Co.,,DOW,2017年にDowDuPontへ統合（旧Dow Chemical）
+The Dow Chemical Co.,,DOW,Merged into DowDuPont in 2017 (legacy Dow Chemical)
 "Staples, Inc.",,SPLS,
 "Xilinx, Inc.",,XLNX,
 "TEGNA, Inc.",,TGNA,
@@ -52,18 +52,18 @@ The Dow Chemical Co.,,DOW,2017年にDowDuPontへ統合（旧Dow Chemical）
 Lancaster Colony Corp.,,LANC,
 FNF Group,,FNF,
 KLA-Tencor Corp.,,KLAC,
-AVX Corp,,AVX,2020年に京セラが買収
+AVX Corp,,AVX,Acquired by Kyocera in 2020
 Boston Private Financial Holdings Inc,,BPFH,
-Discover Financial Services,,DFS,2025年にCapital Oneが買収
-Eaton Vance Corp,,EV,2021年にMorgan Stanleyが買収
+Discover Financial Services,,DFS,Acquired by Capital One in 2025
+Eaton Vance Corp,,EV,Acquired by Morgan Stanley in 2021
 Exxon Mobil Corp,,XOM,
 First Bancshares Inc/The,,FBMS,
-Foot Locker Inc,,FL,2025年にDick's Sporting Goodsが買収
+Foot Locker Inc,,FL,Acquired by Dick's Sporting Goods in 2025
 Guess? Inc,,GES,
 Heartland Financial USA Inc,,HTLF,
-Interpublic Group of Cos Inc/The,,IPG,2025年にOmnicomが買収
+Interpublic Group of Cos Inc/The,,IPG,Acquired by Omnicom in 2025
 Janus Henderson Group PLC,,JHG,
-Kellogg Co,,K,2023年にKellanovaへ社名変更
+Kellogg Co,,K,Renamed to Kellanova in 2023
 Kellanova,,K,
 Leggett & Platt Inc,,LEG,
 MDC Holdings Inc,,MDC,
@@ -72,7 +72,7 @@ Neenah Inc,,NP,
 Nordstrom Inc,,JWN,
 PacWest Bancorp,,PACW,
 Paramount Global,,PARA,
-ViacomCBS Inc,,VIAC,2022年にParamount Globalへ社名変更
+ViacomCBS Inc,,VIAC,Renamed to Paramount Global in 2022
 Premier Financial Corp,,PFC,
 Steelcase Inc,,SCS,
 Synovus Financial Corp,,SNV,
@@ -80,122 +80,122 @@ Umpqua Holdings Corp,,UMPQ,
 Waddell & Reed Financial Inc,,WDR,
 Webster Financial Corp,,WBS,
 Wyndham Destinations Inc,,WYND,
-PartnerRe Ltd.,,PRE,2016年にEXORが買収（SEC一覧では優先株PREJFが返るため上書き）
-Independent Bank Group Inc,45384B106,IBTX,Independent Bank Corp (INDB) との社名衝突回避（2025年買収）
-Vector Group Ltd,92240M108,VGR,2024年JTが買収（スピンオフDOUGとの区別）
-BB&T Corp,054937107,BBT.OLD,2019年SunTrustと合併しTruist (TFC)へ（現BBTとの再利用衝突回避）
-ALLETE Inc,018522300,ALE,非公開化により上場廃止
-Kennedy-Wilson Holdings Inc,489398107,KW,上場廃止
-ProAssurance Corp,74267C106,PRA,買収により上場廃止
-NorthWestern Corp,668074305,NWE,持株会社再編
-Avangrid Inc,05351W103,AGR,2024年Iberdrolaが完全子会社化
-National Instruments Corp,636518102,NATI,2023年Emersonが買収
-Pioneer Natural Resources Co,723787107,PXD,2024年Exxon Mobilが買収
-Kenvue Inc,49177J102,KVUE,CUSIP指定で解決
-T-Mobile US Inc Rights,872590112,TMUSR,2020年6月のライツ（普通株TMUS 872590104と区別）
-CRH PLC,G25508105,CRH,CUSIP指定で解決
-NXP Semiconductors NV,N6596X109,NXPI,CUSIP指定で解決
-Warner Bros Discovery Inc,934423104,WBD,CUSIP指定で解決
-Electronic Arts Inc,285512109,EA,CUSIP指定で解決
-CNH Industrial NV,N20944109,CNH,CUSIP指定で解決
-AvalonBay Communities Inc,053484101,AVB,CUSIP指定で解決
-Cadence Bank,12740C103,CADE,CUSIP指定で解決
-Air Lease Corp,00912X302,AL,CUSIP指定で解決
-Hologic Inc,436440101,HOLX,CUSIP指定で解決（CVRと区別）
-Sealed Air Corp,81211K100,SEE,CUSIP指定で解決
-Atkore Inc,047649108,ATKR,CUSIP指定で解決
-Hillenbrand Inc,431571108,HI,CUSIP指定で解決
-CSG Systems International Inc,126349109,CSGS,CUSIP指定で解決
-Select Medical Holdings Corp,81619Q105,SEM,CUSIP指定で解決
-Fresh Del Monte Produce Inc,G36738105,FDP,CUSIP指定で解決
-Ardagh Metal Packaging SA,L02235106,AMBP,CUSIP指定で解決
-Discovery Inc Class A,25470F104,DISCA,CUSIP指定（Series A）
-Discovery Inc Class C,25470F302,DISCK,CUSIP指定（Series C）
-SunTrust Banks Inc,867914103,STI,2019年Truistへ合併
-Activision Blizzard Inc,00507V109,ATVI,2023年Microsoftが買収
-Twitter Inc,90184L102,TWTR,2022年非公開化
-IHS Markit Ltd,G47567105,INFO,2022年S&P Globalと合併
-FleetCor Technologies Inc,339041105,CPAY,2024年Corpay Incへ社名変更
-Cerner Corp,156782104,CERN,2022年Oracleが買収
-Allergan PLC,G0177J108,AGN,2020年AbbVieが買収
-Clearway Energy Inc. Class A,,CWEN.A,Vanguard旧書類クラスA区別
-Clearway Energy Inc.,,CWEN,Vanguard旧書類クラスC区別
-Molex Inc. Class A,,MOLXA,Vanguard旧書類クラスA区別
-Berkshire Hathaway Inc. Class A,,BRK.A,Vanguard旧書類クラスA区別
-Berkshire Hathaway Inc. Class B,,BRK.B,Vanguard旧書類クラスB区別
-Alphabet Inc. Class A,,GOOGL,Vanguard旧書類クラスA区別
-Alphabet Inc. Class C,,GOOG,Vanguard旧書類クラスC区別
-Alphabet Inc.,,GOOG,Vanguard旧書類クラスC（クラス表記省略時）
-Google Inc. Class A,,GOOGL,2015年Alphabetへ再編（クラスA）
-Google Inc. Class C,,GOOG,2015年Alphabetへ再編（クラスC）
-Google Inc.,,GOOG,2014年クラスC分割直後（表記省略時）
-Fox Corp. Class A,,FOXA,Vanguard旧書類クラスA区別
-Fox Corp. Class B,,FOX,Vanguard旧書類クラスB区別
-Twenty-First Century Fox Inc. Class A,,FOXA,Vanguard旧書類クラスA
-Twenty-First Century Fox Inc.,,FOX,Vanguard旧書類クラスB
-News Corp. Class A,,NWSA,Vanguard旧書類クラスA区別
-News Corp. Class B,,NWS,Vanguard旧書類クラスB区別
-Lennar Corp. Class A,,LEN,Vanguard旧書類クラスA区別
-Lennar Corp. Class B,,LEN.B,Vanguard旧書類クラスB区別
-Under Armour Inc. Class A,,UAA,Vanguard旧書類クラスA区別
-Under Armour Inc. Class C,,UA,Vanguard旧書類クラスC区別
-Under Armour Inc.,,UA,Vanguard旧書類クラスC（表記省略時）
-Comcast Corp. Class A,,CMCSA,Vanguard旧書類クラスA区別
-Comcast Corp.,,CMCSK,Vanguard旧書類Class A Special（2015年統合）
-Comcast Corp. Class A Special Shares,,CMCSK,Vanguard旧書類Class A Special
-Comcast Corp. Special Class A,,CMCSK,Vanguard旧書類Class A Special
-Discovery Communications Inc. Class A,,DISCA,Vanguard旧書類Series A
-Discovery Communications Inc.,,DISCK,Vanguard旧書類Series C
-Discovery Inc. Class A,,DISCA,Vanguard旧書類Series A
-Discovery Inc.,,DISCK,Vanguard旧書類Series C
-Pentair Inc.,,PNR.OLD,2012年スイス籍Pentair Ltd再編時の旧法人区別
-Facebook Inc. Class A,,META,2021年Meta Platformsへ社名変更
-Adobe Systems Inc.,,ADBE,2018年Adobe Incへ社名変更
-Priceline Group Inc.,,BKNG,2018年Booking Holdingsへ社名変更
-priceline.com Inc.,,BKNG,2014年Priceline Groupへ社名変更
-CVS Caremark Corp.,,CVS,2014年CVS Healthへ社名変更
-Biogen Idec Inc.,,BIIB,2015年Biogen Incへ社名変更
-Hewlett-Packard Co.,,HPQ,2015年HP Incへ再編
-Dominion Resources Inc.,,D,2017年Dominion Energyへ社名変更
-Fisery Inc.,,FISV,Vanguard 2019-06書類のFiserv誤植吸収
-FleetCor Technologies Inc.,,CPAY,2024年Corpay Incへ社名変更
-Freeport-McMoRan Copper & Gold Inc.,,FCX,2014年Freeport-McMoRan Incへ社名変更
-Delphi Automotive plc,,APTV,2017年Aptiv plcへ社名変更
-ACE Ltd.,,CB,2016年Chubb買収・社名変更（存続法人CIKは旧ACE）
-Chubb Corp.,,CB.OLD,2016年ACE Ltdに買収され上場廃止（現Chubb Ltdと区別）
-HCA Holdings Inc.,,HCA,2017年HCA Healthcareへ社名変更
-Avago Technologies Ltd. Class A,,AVGO,2016年Broadcom買収・社名変更（存続法人CIKは旧Avago）
-Avago Technologies Ltd.,,AVGO,2016年Broadcom買収・社名変更（存続法人CIKは旧Avago）
-Broadcom Corp. Class A,,BRCM,2016年Avagoに買収され上場廃止（現Broadcom Inc=AVGOと区別）
-Anthem Inc.,,ELV,2022年Elevance Healthへ社名変更
-WellPoint Inc.,,ELV,2014年Anthemへ社名変更
-Kraft Foods Inc.,,MDLZ,2012年Mondelez Internationalへ社名変更
-Kraft Foods Group Inc.,,KHC,2015年Heinzと合併しKraft Heinzへ
-BB&T Corp.,,BBT.OLD,2019年SunTrustと合併しTruistへ
-EI du Pont de Nemours & Co.,,DD,Vanguard旧書類表記（ピリオドなし）
-Allergan plc,,AGN,2020年AbbVieが買収
-Actavis plc,,ACT,2015年Allergan plcへ社名変更
-Time Warner Inc.,,TWX,2018年AT&Tが買収
-Aetna Inc.,,AET,2018年CVS Healthが買収
-Activision Blizzard Inc.,,ATVI,2023年Microsoftが買収
-Express Scripts Holding Co.,,ESRX,2018年Cignaが買収
-Monsanto Co.,,MON,2018年Bayerが買収
-Time Warner Cable Inc.,,TWC,2016年Charter Communicationsが買収
-Anadarko Petroleum Corp.,,APC,2019年Occidental Petroleumが買収
-EMC Corp.,,EMC,2016年Dellが買収
-Red Hat Inc.,,RHT,2019年IBMが買収
-Yahoo! Inc.,,YHOO,2017年Verizonが事業買収
-SunTrust Banks Inc.,,STI,2019年Truistへ合併
-Concho Resources Inc.,,CXO,2021年ConocoPhillipsが買収
-DIRECTV,,DTV,2015年AT&Tが買収
-Twitter Inc.,,TWTR,2022年非公開化
-Covidien plc,,COV,2015年Medtronicが買収
-Cerner Corp.,,CERN,2022年Oracleが買収
-IHS Markit Ltd.,,INFO,2022年S&P Globalと合併
-Rockwell Collins Inc.,,COL,2018年United Technologiesが買収
-Spectra Energy Corp.,,SE,2017年Enbridgeが買収
-Total System Services Inc.,,TSS,2019年Global Paymentsが買収
-Andeavor,,ANDV,2018年Marathon Petroleumが買収
-CBS Corp. Class B,,CBS,2019年Viacomと合併
-L3 Technologies Inc.,,LLL,2019年Harrisと合併しL3Harrisへ
-L-3 Communications Holdings Inc.,,LLL,2016年L3 Technologiesへ社名変更
+PartnerRe Ltd.,,PRE,Acquired by EXOR in 2016 (override preferred ticker PREJF from SEC list)
+Independent Bank Group Inc,45384B106,IBTX,Disambiguate from Independent Bank Corp (INDB); acquired in 2025
+Vector Group Ltd,92240M108,VGR,Acquired by JT in 2024 (distinguish from spin-off DOUG)
+BB&T Corp,054937107,BBT.OLD,Merged with SunTrust into Truist (TFC) in 2019 (avoid collision with reused BBT)
+ALLETE Inc,018522300,ALE,Taken private and delisted
+Kennedy-Wilson Holdings Inc,489398107,KW,Delisted
+ProAssurance Corp,74267C106,PRA,Acquired and delisted
+NorthWestern Corp,668074305,NWE,Holding company reorganization
+Avangrid Inc,05351W103,AGR,Taken private by Iberdrola in 2024
+National Instruments Corp,636518102,NATI,Acquired by Emerson in 2023
+Pioneer Natural Resources Co,723787107,PXD,Acquired by Exxon Mobil in 2024
+Kenvue Inc,49177J102,KVUE,Resolved via CUSIP override
+T-Mobile US Inc Rights,872590112,TMUSR,June 2020 rights offering (distinguish from common TMUS 872590104)
+CRH PLC,G25508105,CRH,Resolved via CUSIP override
+NXP Semiconductors NV,N6596X109,NXPI,Resolved via CUSIP override
+Warner Bros Discovery Inc,934423104,WBD,Resolved via CUSIP override
+Electronic Arts Inc,285512109,EA,Resolved via CUSIP override
+CNH Industrial NV,N20944109,CNH,Resolved via CUSIP override
+AvalonBay Communities Inc,053484101,AVB,Resolved via CUSIP override
+Cadence Bank,12740C103,CADE,Resolved via CUSIP override
+Air Lease Corp,00912X302,AL,Resolved via CUSIP override
+Hologic Inc,436440101,HOLX,Resolved via CUSIP override (distinguish from CVR)
+Sealed Air Corp,81211K100,SEE,Resolved via CUSIP override
+Atkore Inc,047649108,ATKR,Resolved via CUSIP override
+Hillenbrand Inc,431571108,HI,Resolved via CUSIP override
+CSG Systems International Inc,126349109,CSGS,Resolved via CUSIP override
+Select Medical Holdings Corp,81619Q105,SEM,Resolved via CUSIP override
+Fresh Del Monte Produce Inc,G36738105,FDP,Resolved via CUSIP override
+Ardagh Metal Packaging SA,L02235106,AMBP,Resolved via CUSIP override
+Discovery Inc Class A,25470F104,DISCA,CUSIP override (Series A)
+Discovery Inc Class C,25470F302,DISCK,CUSIP override (Series C)
+SunTrust Banks Inc,867914103,STI,Merged into Truist in 2019
+Activision Blizzard Inc,00507V109,ATVI,Acquired by Microsoft in 2023
+Twitter Inc,90184L102,TWTR,Taken private in 2022
+IHS Markit Ltd,G47567105,INFO,Merged with S&P Global in 2022
+FleetCor Technologies Inc,339041105,CPAY,Renamed to Corpay Inc in 2024
+Cerner Corp,156782104,CERN,Acquired by Oracle in 2022
+Allergan PLC,G0177J108,AGN,Acquired by AbbVie in 2020
+Clearway Energy Inc. Class A,,CWEN.A,Vanguard legacy Class A disambiguation
+Clearway Energy Inc.,,CWEN,Vanguard legacy Class C disambiguation
+Molex Inc. Class A,,MOLXA,Vanguard legacy Class A disambiguation
+Berkshire Hathaway Inc. Class A,,BRK.A,Vanguard legacy Class A disambiguation
+Berkshire Hathaway Inc. Class B,,BRK.B,Vanguard legacy Class B disambiguation
+Alphabet Inc. Class A,,GOOGL,Vanguard legacy Class A disambiguation
+Alphabet Inc. Class C,,GOOG,Vanguard legacy Class C disambiguation
+Alphabet Inc.,,GOOG,Vanguard legacy Class C (class label omitted)
+Google Inc. Class A,,GOOGL,Reorganized into Alphabet in 2015 (Class A)
+Google Inc. Class C,,GOOG,Reorganized into Alphabet in 2015 (Class C)
+Google Inc.,,GOOG,Post-2014 Class C split (class label omitted)
+Fox Corp. Class A,,FOXA,Vanguard legacy Class A disambiguation
+Fox Corp. Class B,,FOX,Vanguard legacy Class B disambiguation
+Twenty-First Century Fox Inc. Class A,,FOXA,Vanguard legacy Class A
+Twenty-First Century Fox Inc.,,FOX,Vanguard legacy Class B
+News Corp. Class A,,NWSA,Vanguard legacy Class A disambiguation
+News Corp. Class B,,NWS,Vanguard legacy Class B disambiguation
+Lennar Corp. Class A,,LEN,Vanguard legacy Class A disambiguation
+Lennar Corp. Class B,,LEN.B,Vanguard legacy Class B disambiguation
+Under Armour Inc. Class A,,UAA,Vanguard legacy Class A disambiguation
+Under Armour Inc. Class C,,UA,Vanguard legacy Class C disambiguation
+Under Armour Inc.,,UA,Vanguard legacy Class C (class label omitted)
+Comcast Corp. Class A,,CMCSA,Vanguard legacy Class A disambiguation
+Comcast Corp.,,CMCSK,Vanguard legacy Class A Special (consolidated in 2015)
+Comcast Corp. Class A Special Shares,,CMCSK,Vanguard legacy Class A Special
+Comcast Corp. Special Class A,,CMCSK,Vanguard legacy Class A Special
+Discovery Communications Inc. Class A,,DISCA,Vanguard legacy Series A
+Discovery Communications Inc.,,DISCK,Vanguard legacy Series C
+Discovery Inc. Class A,,DISCA,Vanguard legacy Series A
+Discovery Inc.,,DISCK,Vanguard legacy Series C
+Pentair Inc.,,PNR.OLD,Legacy U.S. entity before 2012 Swiss Pentair Ltd reorganization
+Facebook Inc. Class A,,META,Renamed to Meta Platforms in 2021
+Adobe Systems Inc.,,ADBE,Renamed to Adobe Inc in 2018
+Priceline Group Inc.,,BKNG,Renamed to Booking Holdings in 2018
+priceline.com Inc.,,BKNG,Renamed to Priceline Group in 2014
+CVS Caremark Corp.,,CVS,Renamed to CVS Health in 2014
+Biogen Idec Inc.,,BIIB,Renamed to Biogen Inc in 2015
+Hewlett-Packard Co.,,HPQ,Reorganized into HP Inc in 2015
+Dominion Resources Inc.,,D,Renamed to Dominion Energy in 2017
+Fisery Inc.,,FISV,Absorb Fiserv typo in Vanguard 2019-06 filing
+FleetCor Technologies Inc.,,CPAY,Renamed to Corpay Inc in 2024
+Freeport-McMoRan Copper & Gold Inc.,,FCX,Renamed to Freeport-McMoRan Inc in 2014
+Delphi Automotive plc,,APTV,Renamed to Aptiv plc in 2017
+ACE Ltd.,,CB,Acquired Chubb and renamed in 2016 (surviving CIK is legacy ACE)
+Chubb Corp.,,CB.OLD,Acquired by ACE Ltd and delisted in 2016 (distinguish from current Chubb Ltd)
+HCA Holdings Inc.,,HCA,Renamed to HCA Healthcare in 2017
+Avago Technologies Ltd. Class A,,AVGO,Acquired Broadcom and renamed in 2016 (surviving CIK is legacy Avago)
+Avago Technologies Ltd.,,AVGO,Acquired Broadcom and renamed in 2016 (surviving CIK is legacy Avago)
+Broadcom Corp. Class A,,BRCM,Acquired by Avago and delisted in 2016 (distinguish from Broadcom Inc = AVGO)
+Anthem Inc.,,ELV,Renamed to Elevance Health in 2022
+WellPoint Inc.,,ELV,Renamed to Anthem in 2014
+Kraft Foods Inc.,,MDLZ,Renamed to Mondelez International in 2012
+Kraft Foods Group Inc.,,KHC,Merged with Heinz into Kraft Heinz in 2015
+BB&T Corp.,,BBT.OLD,Merged with SunTrust into Truist in 2019
+EI du Pont de Nemours & Co.,,DD,Vanguard legacy spelling (without periods)
+Allergan plc,,AGN,Acquired by AbbVie in 2020
+Actavis plc,,ACT,Renamed to Allergan plc in 2015
+Time Warner Inc.,,TWX,Acquired by AT&T in 2018
+Aetna Inc.,,AET,Acquired by CVS Health in 2018
+Activision Blizzard Inc.,,ATVI,Acquired by Microsoft in 2023
+Express Scripts Holding Co.,,ESRX,Acquired by Cigna in 2018
+Monsanto Co.,,MON,Acquired by Bayer in 2018
+Time Warner Cable Inc.,,TWC,Acquired by Charter Communications in 2016
+Anadarko Petroleum Corp.,,APC,Acquired by Occidental Petroleum in 2019
+EMC Corp.,,EMC,Acquired by Dell in 2016
+Red Hat Inc.,,RHT,Acquired by IBM in 2019
+Yahoo! Inc.,,YHOO,Core business acquired by Verizon in 2017
+SunTrust Banks Inc.,,STI,Merged into Truist in 2019
+Concho Resources Inc.,,CXO,Acquired by ConocoPhillips in 2021
+DIRECTV,,DTV,Acquired by AT&T in 2015
+Twitter Inc.,,TWTR,Taken private in 2022
+Covidien plc,,COV,Acquired by Medtronic in 2015
+Cerner Corp.,,CERN,Acquired by Oracle in 2022
+IHS Markit Ltd.,,INFO,Merged with S&P Global in 2022
+Rockwell Collins Inc.,,COL,Acquired by United Technologies in 2018
+Spectra Energy Corp.,,SE,Acquired by Enbridge in 2017
+Total System Services Inc.,,TSS,Acquired by Global Payments in 2019
+Andeavor,,ANDV,Acquired by Marathon Petroleum in 2018
+CBS Corp. Class B,,CBS,Merged with Viacom in 2019
+L3 Technologies Inc.,,LLL,Merged with Harris into L3Harris in 2019
+L-3 Communications Holdings Inc.,,LLL,Renamed to L3 Technologies in 2016

@@ -1,6 +1,6 @@
-"""SQLite データベース接続およびスキーマ初期化。
+"""SQLite database connection and schema initialization.
 
-DESIGN.md 第4章の 2 層データモデル（ETF 構成 DB × 個別株 DB）を定義する。
+Defines the two-layer data model (ETF holdings layer and equity fundamentals layer).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from src.env import DB_PATH
 
 SCHEMA_SQL = """
 -- ============================================================
--- 1. ETF 構成 DB
+-- 1. ETF holdings layer
 -- ============================================================
 CREATE TABLE IF NOT EXISTS etfs (
     etf_id                TEXT PRIMARY KEY,
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS etf_changes (
 );
 
 -- ============================================================
--- 2. 個別株 DB
+-- 2. Equity fundamentals layer
 -- ============================================================
 CREATE TABLE IF NOT EXISTS securities (
     security_id   TEXT PRIMARY KEY,
@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS stock_metrics (
 
 
 def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
-    """SQLite 接続を開く。"""
+    """Open a SQLite connection."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -209,11 +209,11 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
-    """全テーブルを作成（既存 DB への追加カラム移行を含む）して接続を返す。"""
+    """Create all tables (including additive column migrations) and return a connection."""
     conn = connect(db_path)
     conn.executescript(SCHEMA_SQL)
 
-    # 既存 DB に対して不足カラムがあれば安全に追加する
+    # Safely add any missing columns to an existing database
     migrations: dict[str, tuple[str, ...]] = {
         "financials_annual": (
             "gross_profit",

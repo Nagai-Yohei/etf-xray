@@ -1,9 +1,9 @@
-# 環境変数・秘密情報（テンプレートの .env.example のみ許可）
+# Environment variables and secrets (only the .env.example template is allowed)
 .env
 .env.*
 !.env.example
 
-# 秘密鍵・証明書
+# Private keys and certificates
 *.pem
 *.key
 *.p12
@@ -15,7 +15,7 @@ id_rsa.*
 id_ed25519
 id_ed25519.*
 
-# ローカルデータ・SQLite DB・公開用ビルド成果物
+# Local data, SQLite DB, and static build outputs
 data/
 dist/
 *.db
@@ -25,7 +25,7 @@ dist/
 *.sqlite
 *.sqlite3
 
-# Python 仮想環境・キャッシュ
+# Python virtual environments and caches
 .venv/
 venv/
 __pycache__/
@@ -36,7 +36,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# デプロイ・ログ・OS・エディタ一時ファイル
+# Deployment, logs, OS, and editor temporary files
 .wrangler/
 *.log
 .DS_Store

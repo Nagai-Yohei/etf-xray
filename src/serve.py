@@ -1,7 +1,7 @@
-"""ローカル確認用静的 HTTP サーバー（dist/ を配信）。
+"""Local static HTTP server for previewing dist/.
 
-web/_headers のセキュリティヘッダ（厳格 CSP 等）をローカルでも同様に付与し、
-本番 Cloudflare Pages 環境と同じ制約下で動作確認できるようにする。
+Applies security headers from web/_headers (including strict CSP) locally
+so verification matches the production Cloudflare Pages environment.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _load_security_headers() -> list[tuple[str, str]]:
 
 
 class SecureStaticHandler(SimpleHTTPRequestHandler):
-    """CSP・セキュリティヘッダ付き静的ファイルハンドラ。"""
+    """Static file handler with CSP and security headers."""
 
     security_headers: list[tuple[str, str]] = []
 

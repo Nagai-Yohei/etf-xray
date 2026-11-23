@@ -1,8 +1,8 @@
 /**
- * Stock View (#/stock/<SECURITY_ID>) — バフェット・コード風の年次・四半期分析ビュー
- * - ヘッダー & サマリー KPI（利回り・PER/PBR・配当・粗利率/営業or税引前利益率・ROIC・株式数増減・財務健全性）
+ * Stock View (#/stock/<SECURITY_ID>) — annual and quarterly fundamental analysis view
+ * - Header & summary KPIs (yield, P/E, P/B, dividend streak/CAGR, margins, ROIC, share count change, solvency)
  * - Earnings (PL) / Cash Flow & Return / Balance Sheet & Share Count / Dividends / Quarterly (10-Q) / ETF Ownership
- * - データが存在しない系列は自動非表示、Op. Income 非報告企業（MRK/CVX/銀行等）は Pretax Income を自動表示
+ * - Auto-hides empty series; substitutes Pretax Income for issuers that omit Operating Income (e.g. MRK, CVX, banks)
  */
 
 import { getStockDetail } from "./api.js";
@@ -109,7 +109,8 @@ export async function renderStockView(
   securityId,
   fallbackEtfId,
   setTopbarContext = null,
-  etfMetaList = []
+  etfMetaList = [],
+  backTarget = null
 ) {
   destroyAllCharts();
   clearNode(root);
@@ -134,8 +135,12 @@ export async function renderStockView(
 
   const etfIds = Object.keys(detail.etf_history || {});
   const primaryEtf = detail.current_etfs?.[0] || etfIds[0] || fallbackEtfId || "SCHD";
+  const resolvedBack = backTarget || {
+    href: `#/etf/${encodeURIComponent(primaryEtf)}`,
+    label: `← Back to ${primaryEtf}`,
+  };
 
-  // Op. Income 非報告企業（製薬・エネルギー・金融等）は Pretax Income を緑系列に自動適用
+  // Use Pretax Income as the green series for issuers that do not report Operating Income (pharma, energy, banks)
   const hasOpIncome = hasAnyValue(annual.map((r) => r.operating_income));
   const profitLabel = hasOpIncome ? "Op. Income" : "Pretax Income";
   const profitMarginLabel = hasOpIncome ? "Op. Margin (%)" : "Pretax Margin (%)";
@@ -182,18 +187,18 @@ export async function renderStockView(
 
   clearNode(root);
 
-  // 1. 戻るリンク
+  // 1. Back link
   root.appendChild(
     el("div", { className: "back-row" }, [
       el("a", {
-        href: `#/etf/${encodeURIComponent(primaryEtf)}`,
+        href: resolvedBack.href,
         className: "back-link",
-        text: `← Back to ${primaryEtf}`,
+        text: resolvedBack.label,
       }),
     ])
   );
 
-  // 2. 銘柄ヘッダー
+  // 2. Security header
   const etfBadges = etfIds.map((eid) => {
     const hist = detail.etf_history[eid] || [];
     const latest = hist[hist.length - 1];
@@ -233,7 +238,7 @@ export async function renderStockView(
     ])
   );
 
-  // 3. サマリー KPI カード（8枚）
+  // 3. Summary KPI cards (8 cards)
   const kpis = [
     {
       label: "TTM Dividend Yield",
@@ -291,7 +296,7 @@ export async function renderStockView(
     )
   );
 
-  // 4. セクションタブ & Visual/Table 切替バー
+  // 4. Section tabs & Visual/Table mode toggle bar
   const tabsBar = el("div", { className: "section-tabs" });
   const sectionsContainer = el("div");
   root.appendChild(tabsBar);
@@ -466,7 +471,7 @@ export async function renderStockView(
           });
         }
 
-        // 右グラフ: Diluted EPS + Op/Pretax Margin + Gross Margin（有効な系列のみ表示）
+        // Right chart: Diluted EPS + Op/Pretax Margin + Gross Margin (non-empty series only)
         const c2 = el("canvas", { ariaLabel: "EPS and profit margins chart" });
         const epsData = annual.map((r) => r.eps_diluted);
         const profMarginData = annual.map((r) => {
@@ -502,7 +507,7 @@ export async function renderStockView(
             order: 1,
           });
         }
-        // Gross Margin が最新 3 年度以内に存在する場合のみ右グラフに補助表示（過去途中で途切れた企業の見栄え崩れ防止）
+        // Plot Gross Margin only if reported within the last 3 fiscal years (avoids truncated historical lines)
         const hasRecentGrossMargin = hasAnyValue(grossMarginData.slice(-3));
         if (hasRecentGrossMargin) {
           hasRightAxis = true;
@@ -578,7 +583,7 @@ export async function renderStockView(
         );
       }
 
-      // PL 項目の欠損・代替理由を自動注記
+      // Auto-annotate missing or substituted PL line items
       const plNotes = [];
       if (!hasOpIncome) {
         plNotes.push(
@@ -1319,7 +1324,7 @@ export async function renderStockView(
       );
       const body = el("div", { className: "card-body" });
 
-      // 前年同期比（4 四半期前との比較）を算出してから直近 12 四半期を切り出す
+      // Compute YoY deltas (4 quarters prior) before slicing the latest 12 quarters
       const qWithYoy = quarterly.map((q, idx) => {
         const prev = idx >= 4 ? quarterly[idx - 4] : null;
         const revYoy =
@@ -1466,7 +1471,7 @@ export async function renderStockView(
       );
       const body = el("div", { className: "card-body" });
 
-      // 全 ETF の基準日タイムラインを統合（複数 ETF で四半期ズレを相互補完）
+      // Merge reporting-date timelines across ETFs to complement staggered quarter-ends
       const allDatesSet = new Set((detail.prices || []).map((p) => p.as_of));
       const weightLookup = {};
       const flatRows = [];
@@ -1589,7 +1594,7 @@ export async function renderStockView(
         renderEtfTable();
       }
 
-      // ETF ごとのデータ収録開始時期を明記（収録期間差による誤解を防止）
+      // Show each ETF's coverage start date to avoid misinterpreting staggered historical spans
       if (etfIds.length > 0 && etfMetaList.length > 0) {
         const metaById = new Map(etfMetaList.map((e) => [e.etf_id, e]));
         const covParts = etfIds

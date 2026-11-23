@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# etf-xray 実行ヘルパー
+# etf-xray CLI helper script
 
 set -euo pipefail
 
@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
 
 if [ ! -x "$PYTHON_BIN" ]; then
-  echo "エラー: .venv が見つかりません。Python 3.10+ で .venv を作成してください。" >&2
+  echo "Error: .venv not found. Create a virtual environment with Python 3.10+ first." >&2
   exit 1
 fi
 

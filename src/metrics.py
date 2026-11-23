@@ -1,8 +1,8 @@
-"""個別株の基準日株価（quarter_prices）およびファンダメンタル・配当指標（stock_metrics）の算出。
+"""Compute implied quarter-end prices (quarter_prices) and fundamental/dividend metrics (stock_metrics).
 
-AGENTS.md ルール:
-- 配当性向は同一決算期基準（DPS ÷ EPS および総額ベースの DividendsPaid ÷ NetIncome / ÷ FCF）。
-- 基準日株価は保有 ETF の value_usd ÷ shares から算出。
+AGENTS.md rules:
+- Compute payout ratios on a same-fiscal-year basis (DPS / EPS, DividendsPaid / NetIncome, DividendsPaid / FCF).
+- Derive quarter-end prices from ETF holdings (value_usd / shares).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from src.fundamentals import extract_annual_financials
 
 
 def _effective_dps(row: sqlite3.Row | dict[str, Any]) -> tuple[float | None, bool]:
-    """年次レコードから有効 DPS と推定フラグを返す（宣言 > 支払 > 総額÷株数フォールバック）。"""
+    """Return effective DPS and fallback flag from an annual row (declared > paid > dividends_paid/shares)."""
     if row["dps_declared"] is not None:
         return float(row["dps_declared"]), False
     if row["dps_paid"] is not None:
@@ -39,9 +39,9 @@ def _calc_cagr(start_val: float | None, end_val: float | None, years: int) -> fl
 
 
 def rebuild_quarter_prices(conn: sqlite3.Connection) -> int:
-    """etf_holdings の value_usd ÷ shares から quarter_prices を再構築する。"""
+    """Rebuild quarter_prices from etf_holdings (value_usd / shares)."""
     conn.execute("DELETE FROM quarter_prices")
-    # 複数 ETF が同一基準日に保有している場合は評価額最大の ETF の単価を採用
+    # When multiple ETFs hold a security on the same date, use the ETF with the largest position value
     rows = conn.execute(
         """
         SELECT security_id, as_of, etf_id, value_usd, shares
@@ -72,7 +72,7 @@ def rebuild_quarter_prices(conn: sqlite3.Connection) -> int:
 def _compute_dividend_streak(
     annual_rows: list[sqlite3.Row],
 ) -> tuple[int | None, int | None, bool]:
-    """連続非減配年数と開始時点到達フラグ（open）、推定DPS利用有無を返す。"""
+    """Return consecutive non-cut dividend years, open-start flag, and whether fallback DPS was used."""
     series: list[tuple[int, float, bool]] = []
     for row in annual_rows:
         dps, is_est = _effective_dps(row)
@@ -97,7 +97,7 @@ def _compute_dividend_streak(
         if prev_dps <= 0:
             reached_start = False
             break
-        # 丸め誤差や端数調整（1.5%）を許容して非減配を判定
+        # Allow a 1.5% rounding/fx tolerance when checking for non-cut dividends
         if cur_dps >= prev_dps * 0.985:
             streak += 1
             cur_dps = prev_dps
@@ -105,7 +105,7 @@ def _compute_dividend_streak(
             reached_start = False
             break
 
-    # 最古年度まで減配なしで到達した場合は「開始時点以降ずっと非減配（例: 15+ yrs）」とする
+    # Mark streak as open-ended (e.g. 15+ yrs) if it runs unbroken back to the earliest fiscal year
     is_open = 1 if (reached_start and len(series) >= 2) else 0
     return streak, is_open, used_est
 
@@ -115,12 +115,12 @@ def _find_value_n_years_ago(
     latest_year: int,
     n_years: int,
 ) -> tuple[float | None, int]:
-    """latest_year から n_years 前（±1 年許容）の値を探して (val, actual_span) を返す。"""
+    """Find the value n_years prior to latest_year (allowing +/-1 yr) and return (val, actual_span)."""
     target = latest_year - n_years
     by_yr = {yr: val for yr, val in series}
     if target in by_yr:
         return by_yr[target], n_years
-    # 52/53週決算で年境が 1 年ずれるケースを吸収
+    # Absorb 1-year boundary shifts from 52/53-week fiscal calendars
     for delta in (-1, 1):
         if (target + delta) in by_yr:
             span = latest_year - (target + delta)
@@ -130,7 +130,7 @@ def _find_value_n_years_ago(
 
 
 def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
-    """全銘柄の stock_metrics を再計算して保存する。"""
+    """Recompute and store stock_metrics for all securities."""
     conn.execute("DELETE FROM stock_metrics")
 
     sec_ids = [
@@ -138,7 +138,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
         for r in conn.execute("SELECT security_id FROM securities ORDER BY security_id").fetchall()
     ]
 
-    # 最新基準日株価マップ
+    # Latest quarter-end price map
     latest_prices: dict[str, tuple[str, float]] = {}
     for r in conn.execute(
         """
@@ -176,7 +176,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
         ttm = ttm_map.get(sec_id)
         notes: list[str] = []
 
-        # TTM / 最新年次からの主要値
+        # Headline values from TTM / latest annual row
         latest_dps_ann, latest_dps_est = _effective_dps(latest_ann) if latest_ann else (None, False)
         dps_ttm = float(ttm["dps_ttm"]) if (ttm and ttm["dps_ttm"] is not None) else latest_dps_ann
         eps_ttm = (
@@ -185,7 +185,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             else (float(latest_ann["eps_diluted"]) if (latest_ann and latest_ann["eps_diluted"] is not None) else None)
         )
 
-        # 利回り・PER・PBR（基準日株価ベース）
+        # Dividend yield, P/E, and P/B based on implied quarter-end price
         ttm_yield = (
             (dps_ttm / latest_price)
             if (dps_ttm is not None and dps_ttm >= 0 and latest_price and latest_price > 0)
@@ -217,7 +217,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             if bps > 0:
                 pb_ratio = latest_price / bps
 
-        # 同一決算期基準の配当性向（DPS ÷ EPS、および総額ベース DividendsPaid ÷ FCF）
+        # Same-fiscal-year payout ratios (DPS / EPS and aggregate DividendsPaid / FCF)
         payout_ratio_eps = None
         payout_ratio_fcf = None
         gross_margin = None
@@ -324,7 +324,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             ):
                 current_ratio = float(latest_ann["current_assets"]) / float(latest_ann["current_liabilities"])
 
-        # 5 年間の発行済株式数増減率（負の値 = 自社株買いによる純減）
+        # 5-year share count change (negative indicates net buybacks)
         sh_series = [
             (int(str(r["fy_end"])[:4]), float(r["shares_diluted"] or r["shares_outstanding"]))
             for r in ann_rows
@@ -336,7 +336,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             if v5_s is not None and v5_s > 0:
                 share_change_5y = (lv_s / v5_s) - 1.0
 
-        # 連続非減配年数 & 配当・売上 CAGR
+        # Consecutive non-cut dividend streak & dividend/revenue CAGRs
         div_streak_years, div_streak_open, used_est_dps = _compute_dividend_streak(ann_rows)
         if used_est_dps or latest_dps_est:
             notes.append("DPS fallback (dividends_paid/shares) used for missing years")
@@ -422,16 +422,16 @@ def compute_etf_dividend_history(
     conn: sqlite3.Connection,
     etf_id: str,
 ) -> dict[str, dict[str, float | None]]:
-    """ETF の全基準日について、保有銘柄ベースの推定年間配当総額と加重平均利回りを算出する。
+    """Estimate annual portfolio dividends and weighted average yield across all ETF reporting dates.
 
-    - 各銘柄の SEC XBRL 年次 DPS（株式分割補正済み）と、分割実行境界日をもとに
-      各基準日当時の株数基準へ整合させて計算する。
-    - 異常値（利回り > 18%）を除外し、カバー済み構成比の加重平均利回りから
-      ETF 全体の推定年間配当総額をスケール算出する。
+    - Aligns each holding's split-adjusted SEC XBRL annual DPS back to the share basis
+      on each reporting date using inferred split effective dates.
+    - Excludes extreme outliers (yield > 18%) and scales the covered weighted yield to the
+      ETF's full equity portfolio value.
     """
     raw_cf_dir = RAW_DIR / "edgar" / "companyfacts"
 
-    # 1. 各銘柄の分割イベントをキャッシュ済み companyfacts から収集
+    # 1. Collect split events per security from cached companyfacts JSON
     cik_map = {
         r["security_id"]: r["cik"]
         for r in conn.execute(
@@ -454,7 +454,7 @@ def compute_etf_dividend_history(
         if splits_by_cik[cik]:
             sec_splits[sec_id] = splits_by_cik[cik]
 
-    # 2. quarter_prices の価格ジャンプから、分割が反映された最初の基準日を特定
+    # 2. Identify the first reporting date reflecting each split via quarter_prices jumps
     prices_by_sec: dict[str, list[tuple[str, float]]] = defaultdict(list)
     for r in conn.execute(
         "SELECT security_id, as_of, price_usd FROM quarter_prices ORDER BY security_id, as_of"
@@ -490,7 +490,7 @@ def compute_etf_dividend_history(
                 factor *= ratio
         return factor
 
-    # 3. 年次有効 DPS および TTM DPS を読み込み
+    # 3. Load effective annual DPS and TTM DPS series
     ann_dps: dict[str, list[tuple[str, float]]] = defaultdict(list)
     for r in conn.execute(
         """
@@ -532,7 +532,7 @@ def compute_etf_dividend_history(
             return series[-1][1]
         return None
 
-    # 4. 基準日ごとに集計
+    # 4. Aggregate portfolio dividends per reporting date
     holdings_by_date: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for r in conn.execute(
         """
@@ -563,7 +563,7 @@ def compute_etf_dividend_history(
             dps_at_date = dps_latest * split_factor_at(sid, as_of)
             price = val / sh
             yld = dps_at_date / price
-            # XBRL 単位異常や複数クラス株の特殊比率による極端な外れ値を除外
+            # Exclude extreme outliers caused by XBRL unit quirks or dual-class ratios
             if yld < 0 or yld > 0.18:
                 continue
             cov_val += val

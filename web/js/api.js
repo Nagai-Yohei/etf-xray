@@ -1,5 +1,5 @@
 /**
- * 分割 JSON フェッチおよびメモリキャッシュ。
+ * Split JSON fetcher and in-memory response cache.
  */
 
 const jsonCache = new Map();

@@ -1,9 +1,9 @@
-"""Schwab 旧書類（N-Q / N-CSR / N-CSRS）HTML アダプタ（2011年11月〜2019年8月）。
+"""Schwab legacy filings (N-Q / N-CSR / N-CSRS) HTML adapter (Nov 2011 - Aug 2019).
 
-AGENTS.md ルール:
-- 全銘柄表（"Portfolio Holdings as of …"）のみ採用し、上位 50 銘柄の Condensed 版を除外する。
-- 解析結果の評価額合計が書類の Total Common Stock と 1 ドル以内で一致しなければ例外とする検証を外さない。
-- 2019 年 5 月末の SCHD は公開書類がない既知の欠落。
+AGENTS.md rules:
+- Parse full "Portfolio Holdings as of ..." tables only; skip Condensed top-50 schedules.
+- Never disable the reconciliation check against Total Common Stock (tolerance <= $1).
+- 2019-05-31 SCHD is a known SEC filing gap.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from src.edgar import EdgarClient, normalize_cik
 
 _SPACE_RE = re.compile(r"\s+")
 _NUM_RE = re.compile(r"^\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)$")
-# 銘柄名末尾の脚注マーカー（例: (a), (b), *, †, ‡ 等）を除去（Class A 等は残す）
+# Strip trailing footnote markers (e.g. (a), (b), *, †, ‡) while preserving share classes like Class A
 _FOOTNOTE_SUFFIX_RE = re.compile(
     r"(?:\s*(?:\([a-z0-9,\s]+\)|[*†‡§^]))+$"
 )
@@ -47,7 +47,7 @@ def _parse_number(cell: str) -> float | None:
 
 def _clean_security_name(raw_name: str) -> str:
     name = _clean_text(raw_name)
-    # 末尾の脚注記号を繰り返し除去
+    # Repeatedly strip trailing footnote markers
     prev = None
     while prev != name:
         prev = name
@@ -56,8 +56,8 @@ def _clean_security_name(raw_name: str) -> str:
 
 
 def _find_full_holdings_section_start(html_text: str, fund_name: str) -> int:
-    """全銘柄表（Condensed 版を除く Portfolio Holdings as of ...）の開始オフセットを返す。"""
-    # タグ・商標記号・空白、および "U.S." / "US" の表記揺れを許容してファンド名を検索
+    """Return the start offset of the full Portfolio Holdings table (excluding Condensed schedules)."""
+    # Match fund name across inline tags, trademark symbols, whitespace, and "U.S." / "US" variants
     word_pats: list[str] = []
     for w in fund_name.split():
         if w.upper() in ("U.S.", "US"):
@@ -73,17 +73,17 @@ def _find_full_holdings_section_start(html_text: str, fund_name: str) -> int:
         tail_plain = _clean_text(re.sub(r"<[^>]+>|&nbsp;|&#160;|&#153;|&#8482;|&trade;", " ", tail))
         tail_low = tail_plain.lower()
 
-        # Condensed 版（上位 50 銘柄サマリー）は必ず除外する
+        # Always skip Condensed top-50 summary schedules
         if "condensed" in tail_low[:80]:
             continue
-        # ファンド名の直後に Portfolio Holdings が続く見出しのみ採用（監査報告書本文等を除外）
+        # Only accept headings immediately followed by Portfolio Holdings (skip audit text, etc.)
         if "portfolio holdings" not in tail_low[:60]:
             continue
-        # 2 ページ目以降の "continued" 見出しは開始点にしない
+        # Do not start on continuation page headings
         if "continued" in tail_low[:80]:
             continue
         if "as of" in tail_low[:160]:
-            # as of を含む正式な開始見出しを最優先
+            # Prefer canonical starting headings containing "as of"
             candidates.append((0, m.start()))
         else:
             candidates.append((1, m.start()))
@@ -91,7 +91,7 @@ def _find_full_holdings_section_start(html_text: str, fund_name: str) -> int:
     if not candidates:
         raise ValueError(f"Full 'Portfolio Holdings as of ...' section not found for {fund_name}")
 
-    # 同一ファイル内で最も優先度が高く、後ろ（正式明細セクション）にある見出しを採用
+    # Pick the last highest-priority heading in the file (the full holdings section)
     min_prio = min(c[0] for c in candidates)
     best_positions = [pos for prio, pos in candidates if prio == min_prio]
     return best_positions[-1]
@@ -106,12 +106,12 @@ def parse_schwab_legacy_html(
     accession: str,
     filed: str,
 ) -> FilingHoldings:
-    """Schwab 旧書類 HTML から SCHD の全普通株明細を抽出し、Total Common Stock と照合する。"""
+    """Extract all common stock holdings from Schwab legacy HTML and reconcile with Total Common Stock."""
     html_text = html_bytes.decode("utf-8", errors="replace")
     start_pos = _find_full_holdings_section_start(html_text, fund_name)
 
-    # 1 ファンド分の全銘柄表は通常 150〜300KB 以内に収まるため、十分な幅を切り出す
-    # ただし次のファンドの "Portfolio Holdings as of" があればそこで打ち切る
+    # A single fund's full schedule typically fits within 150-300KB; slice a generous window
+    # (parsing stops at Total Common Stock / next asset class anyway)
     chunk = html_text[start_pos : start_pos + 700_000]
     doc = lhtml.fromstring(chunk)
 
@@ -130,19 +130,19 @@ def parse_schwab_legacy_html(
         row_text = " ".join(cells)
         row_low = row_text.lower()
 
-        # 先頭サマリー表から Net Assets を取得（pct_net_assets 算出用）
+        # Extract Net Assets from the header summary table (for pct_net_assets)
         if not in_common_stock and "net assets" in row_low and "of net assets" not in row_low:
             last_num = _parse_number(cells[-1])
             if last_num is not None and last_num > 0:
                 net_assets = last_num
 
-        # 普通株セクションの開始検知（例: "Common Stock 99.6% of net assets"）
+        # Detect start of Common Stock section (e.g. "Common Stock 99.6% of net assets")
         if not in_common_stock:
             if row_low.startswith("common stock") and "of net assets" in row_low:
                 in_common_stock = True
             continue
 
-        # Total Common Stock 行（1 行型・2 行型の両方に対応）
+        # Handle Total Common Stock row (both 1-line and 2-line formats)
         if waiting_total_value:
             val_num = _parse_number(cells[-1])
             if val_num is not None and val_num > 0:
@@ -151,28 +151,28 @@ def parse_schwab_legacy_html(
             waiting_total_value = False
 
         if "total common stock" in row_low:
-            # 同じ行の末尾セルに評価額がある場合
+            # Single-line format with total value in the trailing cell
             val_num = _parse_number(cells[-1])
             if val_num is not None and val_num > 0:
                 reported_total = val_num
                 break
-            # 次行に "(Cost $...) | <Value>" がある 2 行型（2011〜2014 年形式）
+            # Two-line format (2011-2014): next row has "(Cost $...) | <Value>"
             waiting_total_value = True
             continue
 
-        # 別の資産クラス（Other Investment Company 等）や次セクションに入ったら終了
+        # Stop when entering another asset class (e.g. Other Investment Company) or next section
         if row_low.startswith(("other investment compan", "short-term investment", "total investments")):
             break
 
-        # 銘柄行の抽出: 先頭が社名、末尾 2 セルが株数・評価額
+        # Extract holding row: leading cells = name, trailing 2 cells = shares & market value
         if len(cells) >= 3:
             val_num = _parse_number(cells[-1])
             sh_num = _parse_number(cells[-2])
             if sh_num is not None and val_num is not None and sh_num > 0 and val_num > 0:
-                # 銘柄名セル群（末尾 2 セルを除く）を結合
+                # Join name cells (all cells before shares and value)
                 name_part = " ".join(cells[:-2])
                 name_low = name_part.lower()
-                # ヘッダや小計行を除外
+                # Skip header and subtotal rows
                 if any(
                     skip in name_low
                     for skip in ("number of shares", "security", "total ", "subtotal")
@@ -207,7 +207,7 @@ def parse_schwab_legacy_html(
 
     calc_total = sum(h.value_usd for h in holdings)
     diff = abs(calc_total - reported_total)
-    # AGENTS.md 必須検証: Total Common Stock と 1 ドル以内で一致しなければ例外
+    # Required reconciliation check: must match Total Common Stock within $1
     if diff > 1.0:
         raise ValueError(
             f"Total Common Stock mismatch for {etf_id} {as_of} ({accession}): "
@@ -230,16 +230,16 @@ def fetch_schwab_legacy_filings(
     etf_cfg: dict[str, Any],
     max_as_of: str = "2019-09-30",
 ) -> list[FilingHoldings]:
-    """Schwab 旧書類（N-Q / N-CSR / N-CSRS）をすべて取得・解析して返す。"""
+    """Fetch and parse all Schwab legacy filings (N-Q / N-CSR / N-CSRS)."""
     etf_id = etf_cfg["etf_id"]
     cik = normalize_cik(etf_cfg["cik"])
     fund_name = etf_cfg["name"]
     fy_end_month = int(etf_cfg.get("fiscal_year_end_month") or 8)
 
-    # 決算月（例: 8月）に応じた報告書種別マッピング
-    semiannual_month = ((fy_end_month + 5) % 12) + 1  # 8月決算 → 2月
-    q1_month = ((fy_end_month + 2) % 12) + 1          # 8月決算 → 11月
-    q3_month = ((fy_end_month + 8) % 12) + 1          # 8月決算 → 5月
+    # Map fiscal-year-end month (e.g. Aug) to quarterly/semiannual form types
+    semiannual_month = ((fy_end_month + 5) % 12) + 1  # Aug FYE -> Feb
+    q1_month = ((fy_end_month + 2) % 12) + 1          # Aug FYE -> Nov
+    q3_month = ((fy_end_month + 8) % 12) + 1          # Aug FYE -> May
 
     all_legacy = client.get_all_filings(
         cik, forms={"N-CSR", "N-CSR/A", "N-CSRS", "N-CSRS/A", "N-Q", "N-Q/A"}

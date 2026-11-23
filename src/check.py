@@ -1,6 +1,6 @@
-"""データ整合性検査 ＋ セキュリティ・情報流出スキャン。
+"""Data integrity check and secret/PII leak scan.
 
-実行方法:
+Usage:
     python -m src.check
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from src.env import DB_PATH, DIST_DIR, ENV_PATH, PROJECT_ROOT, parse_dotenv_file
 
-# 自己マッチを避けるため、一部パターン文字列を分割して組み立てる
+# Split pattern literals to avoid self-matching this module
 PAT_PRIVATE_KEY = re.compile("-----BEGIN" + r" [A-Z0-9 ]*PRIVATE KEY-----")
 PAT_GITHUB_TOKEN = re.compile(
     r"(?:gh[pousr]" + r"_[A-Za-z0-9]{20,}|github_" + r"pat_[A-Za-z0-9_]{20,})"
@@ -64,7 +64,7 @@ TEXT_FILENAMES = {".gitignore", ".env.example", "_headers", "pre-commit", "run.s
 
 
 def _load_secret_values() -> list[str]:
-    """画面出力せずに環境変数・.env から実値候補を収集する。"""
+    """Collect candidate secret values from env and .env without printing them."""
     candidates: list[str] = []
     dummy_pat = re.compile(r"@example\.(?:com|org|net)|your-name|changeme|dummy", re.IGNORECASE)
 
@@ -93,7 +93,7 @@ def _is_scannable_text(path: Path) -> bool:
 
 
 def _iter_repo_files() -> list[Path]:
-    """リポジトリ内の検査対象ファイル一覧を返す（data/・dist/・.venv/・.git/ 除く）。"""
+    """Return scannable repository files (excluding data/, dist/, .venv/, .git/)."""
     files: list[Path] = []
     for root, dirs, filenames in os.walk(PROJECT_ROOT):
         rel_root = Path(root).relative_to(PROJECT_ROOT)
@@ -116,7 +116,7 @@ def _iter_repo_files() -> list[Path]:
 
 
 def _iter_dist_files() -> list[Path]:
-    """dist/ 配下の検査対象ファイル一覧を返す。"""
+    """Return scannable files under dist/."""
     if not DIST_DIR.is_dir():
         return []
     files: list[Path] = []
@@ -142,56 +142,56 @@ def _scan_file_content(
         return
 
     if PAT_PRIVATE_KEY.search(content):
-        errors.append(f"[LEAK] 秘密鍵ヘッダを検出: {rel_label}")
+        errors.append(f"[LEAK] Private key header detected: {rel_label}")
     if PAT_GITHUB_TOKEN.search(content):
-        errors.append(f"[LEAK] GitHub トークン形式を検出: {rel_label}")
+        errors.append(f"[LEAK] GitHub token pattern detected: {rel_label}")
     if PAT_AWS_KEY.search(content):
-        errors.append(f"[LEAK] AWS アクセスキー形式を検出: {rel_label}")
+        errors.append(f"[LEAK] AWS access key pattern detected: {rel_label}")
     if PAT_GOOGLE_KEY.search(content):
-        errors.append(f"[LEAK] Google API キー形式を検出: {rel_label}")
+        errors.append(f"[LEAK] Google API key pattern detected: {rel_label}")
     if PAT_SLACK_TOKEN.search(content):
-        errors.append(f"[LEAK] Slack トークン形式を検出: {rel_label}")
+        errors.append(f"[LEAK] Slack token pattern detected: {rel_label}")
     if PAT_SK_TOKEN.search(content):
-        errors.append(f"[LEAK] API シークレットキー形式を検出: {rel_label}")
+        errors.append(f"[LEAK] API secret key pattern detected: {rel_label}")
     if rel_label != ".env.example" and PAT_ENV_SECRET.search(content):
-        errors.append(f"[LEAK] API トークン直接代入を検出: {rel_label}")
+        errors.append(f"[LEAK] Hardcoded API token assignment detected: {rel_label}")
 
     for match in PAT_EMAIL.findall(content):
         if not PAT_ALLOWED_EMAIL.search(match):
-            errors.append(f"[LEAK] 実メールアドレスを検出: {rel_label}")
+            errors.append(f"[LEAK] Real email address detected: {rel_label}")
             break
 
     for match in PAT_UNIX_PATH.findall(content):
         if match not in ("/Users/...", "/home/..."):
-            errors.append(f"[LEAK] ローカル絶対パスを検出: {rel_label}")
+            errors.append(f"[LEAK] Local absolute path detected: {rel_label}")
             break
 
     for match in PAT_WIN_PATH.findall(content):
         if not match.lower().endswith("\\users\\..."):
-            errors.append(f"[LEAK] Windows ローカル絶対パスを検出: {rel_label}")
+            errors.append(f"[LEAK] Windows local absolute path detected: {rel_label}")
             break
 
     if current_user and len(current_user) >= 3 and f"/Users/{current_user}" in content:
-        errors.append(f"[LEAK] 現在のローカルユーザー名を含むパスを検出: {rel_label}")
+        errors.append(f"[LEAK] Path containing current local username detected: {rel_label}")
 
     for secret in secrets:
         if secret in content:
-            errors.append(f"[LEAK] 環境変数または .env の秘密実値を検出: {rel_label}")
+            errors.append(f"[LEAK] Secret value from env or .env detected: {rel_label}")
             break
 
-    # フロントエンド安全チェック（web/ または dist/ 配下、vendor/ は除外）
+    # Frontend security check (under web/ or dist/, excluding vendor/)
     parts = Path(rel_label).parts
     is_web_asset = (len(parts) >= 2 and parts[0] in ("web", "dist")) and "vendor" not in parts
     is_code_file = path.suffix.lower() in {".html", ".js", ".mjs", ".css"}
     if is_web_asset and is_code_file:
         if PAT_UNSAFE_DOM.search(content):
-            errors.append(f"[SECURITY] 禁止された DOM API を検出: {rel_label}")
+            errors.append(f"[SECURITY] Forbidden unsafe DOM API detected: {rel_label}")
         if PAT_EXTERNAL_CDN.search(content):
-            errors.append(f"[SECURITY] 外部 CDN 読み込みを検出: {rel_label}")
+            errors.append(f"[SECURITY] External CDN reference detected: {rel_label}")
 
 
 def check_git_tracked_files(errors: list[str]) -> int:
-    """Git に禁止ファイルが誤って追跡されていないか検査する。"""
+    """Verify no forbidden or ignored files are tracked in Git."""
     if not (PROJECT_ROOT / ".git").exists():
         return 0
     proc = subprocess.run(
@@ -206,16 +206,16 @@ def check_git_tracked_files(errors: list[str]) -> int:
     tracked = [line for line in proc.stdout.splitlines() if line]
     for rel in tracked:
         if rel == ".env" or (rel.startswith(".env.") and rel != ".env.example"):
-            errors.append(f"[GIT] 環境変数ファイルが Git 追跡されています: {rel}")
+            errors.append(f"[GIT] Environment file is tracked in Git: {rel}")
         elif rel.startswith(("data/", "dist/", ".venv/", "venv/", ".wrangler/")):
-            errors.append(f"[GIT] 除外対象ディレクトリが Git 追跡されています: {rel}")
+            errors.append(f"[GIT] Ignored directory is tracked in Git: {rel}")
         elif rel.endswith((".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12", ".pfx")):
-            errors.append(f"[GIT] 禁止ファイルが Git 追跡されています: {rel}")
+            errors.append(f"[GIT] Forbidden file is tracked in Git: {rel}")
     return len(tracked)
 
 
 def check_database(errors: list[str]) -> str:
-    """data/market.db の整合性を検査する。"""
+    """Validate integrity of data/market.db."""
     if not DB_PATH.is_file():
         return "skipped (DB not created yet)"
 
@@ -225,7 +225,7 @@ def check_database(errors: list[str]) -> str:
         if integrity != "ok":
             errors.append(f"[DB] SQLite integrity_check failed: {integrity}")
 
-        # 必須テーブル存在チェック
+        # Verify required tables exist
         existing_tables = {
             row[0]
             for row in conn.execute(
@@ -248,7 +248,7 @@ def check_database(errors: list[str]) -> str:
             errors.append(f"[DB] Missing tables: {', '.join(missing)}")
             return "missing tables"
 
-        # 構成比合計の検証（データがある場合）
+        # Verify holding weight sums are within tolerance
         bad_weights = conn.execute(
             """
             SELECT etf_id, as_of, SUM(weight) AS total_w
@@ -262,7 +262,7 @@ def check_database(errors: list[str]) -> str:
                 f"[DB] Weight sum out of tolerance for {etf_id} {as_of}: {total_w:.4f}"
             )
 
-        # 年次財務の分割係数が正であることを検証
+        # Verify split factors in annual financials are positive
         bad_splits = conn.execute(
             """
             SELECT security_id, fy_end, split_factor
@@ -282,7 +282,7 @@ def check_database(errors: list[str]) -> str:
 
 
 def check_dist_json(errors: list[str]) -> str:
-    """dist/ 配下の JSON ファイルが破損していないか検証する。"""
+    """Verify all JSON files under dist/ parse cleanly."""
     if not DIST_DIR.is_dir():
         return "skipped (dist not built yet)"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Git pre-commit フック: 秘密情報・個人情報・禁止ファイルのコミットを防止する
-# 有効化: git config core.hooksPath scripts
-# 手動検証: ./scripts/pre-commit --files <ファイル...>
+# Git pre-commit hook: blocks secrets, personal info, and ignored files from being committed
+# Enable: git config core.hooksPath scripts
+# Manual check: ./scripts/pre-commit --files <files...>
 
 set -euo pipefail
 
@@ -24,7 +24,7 @@ fail() {
   ERRORS=$((ERRORS + 1))
 }
 
-# 自己マッチを避けるため、検出パターン文字列の一部を分割して組み立てる
+# Split parts of pattern strings to avoid self-matching this script
 PAT_PRIVATE_KEY="-----BEGIN"" [A-Z0-9 ]*PRIVATE KEY-----"
 PAT_GITHUB_TOKEN="(gh[pousr]""_[A-Za-z0-9]{20,}|github_""pat_[A-Za-z0-9_]{20,})"
 PAT_AWS_KEY="AK""IA[0-9A-Z]{16}"
@@ -35,13 +35,13 @@ PAT_ENV_SECRET="(CLOUDFLARE_API_TOKEN|OPENFIGI_API_KEY|GITHUB_TOKEN|CF_API_TOKEN
 PAT_UNSAFE_DOM="(inner""HTML|outer""HTML|insertAdjacent""HTML)"
 PAT_EXTERNAL_CDN="https?://(cdn\.|cdnjs\.|unpkg\.com|cdn\.jsdelivr\.net|ajax\.googleapis\.com)"
 
-# SEC_USER_AGENT 等の実値を画面出力せずに取得（環境変数および .env から）
+# Collect secret values (e.g. SEC_USER_AGENT) from env and .env without printing them
 SECRET_VALUES=()
 SECRET_COUNT=0
 
 add_secret_value() {
   local val="$1"
-  # 前後の空白とクォートを除去
+  # Trim surrounding whitespace and quotes
   val="${val#"${val%%[![:space:]]*}"}"
   val="${val%"${val##*[![:space:]]}"}"
   val="${val#\"}"
@@ -49,7 +49,7 @@ add_secret_value() {
   val="${val#\'}"
   val="${val%\'}"
 
-  # 空・短すぎる値・ダミー値（example.com 等）は除外
+  # Skip empty, very short, or placeholder values (e.g. example.com)
   if [ "${#val}" -lt 6 ]; then
     return
   fi
@@ -79,24 +79,24 @@ CURRENT_USER="$(id -un 2>/dev/null || true)"
 
 check_path() {
   local file="$1"
-  # 1. 禁止ファイル（除外漏れ）チェック
+  # 1. Check forbidden / ignored file paths
   case "$file" in
     .env|.env.*)
       if [ "$file" != ".env.example" ]; then
-        fail "環境変数ファイルはコミットできません: $file"
+        fail "Environment file cannot be committed: $file"
       fi
       ;;
     data/*|dist/*|.venv/*|venv/*|.wrangler/*|__pycache__/*|*/__pycache__/*)
-      fail "除外対象ディレクトリ配下のファイルはコミットできません: $file"
+      fail "Files under ignored directories cannot be committed: $file"
       ;;
     *.db|*.db-journal|*.db-shm|*.db-wal|*.sqlite|*.sqlite3)
-      fail "データベースファイルはコミットできません: $file"
+      fail "Database files cannot be committed: $file"
       ;;
     *.pem|*.key|*.p12|*.pfx|*.crt|*.jks|id_rsa|id_rsa.*|*/id_rsa|*/id_rsa.*|id_ed25519|id_ed25519.*|*/id_ed25519|*/id_ed25519.*)
-      fail "秘密鍵・証明書ファイルはコミットできません: $file"
+      fail "Private key or certificate files cannot be committed: $file"
       ;;
     .DS_Store|*/.DS_Store)
-      fail "OS 一時ファイルはコミットできません: $file"
+      fail "OS temporary files cannot be committed: $file"
       ;;
   esac
 }
@@ -105,45 +105,45 @@ check_content() {
   local file="$1"
   local content="$2"
 
-  # 2. 秘密鍵・API トークン形式チェック
+  # 2. Check private keys and API token patterns
   if printf '%s\n' "$content" | grep -Eq -e "$PAT_PRIVATE_KEY"; then
-    fail "秘密鍵ヘッダを検出しました: $file"
+    fail "Private key header detected: $file"
   fi
   if printf '%s\n' "$content" | grep -Eq -e "$PAT_GITHUB_TOKEN"; then
-    fail "GitHub トークン形式の文字列を検出しました: $file"
+    fail "GitHub token pattern detected: $file"
   fi
   if printf '%s\n' "$content" | grep -Eq -e "$PAT_AWS_KEY"; then
-    fail "AWS アクセスキー形式の文字列を検出しました: $file"
+    fail "AWS access key pattern detected: $file"
   fi
   if printf '%s\n' "$content" | grep -Eq -e "$PAT_GOOGLE_KEY"; then
-    fail "Google API キー形式の文字列を検出しました: $file"
+    fail "Google API key pattern detected: $file"
   fi
   if printf '%s\n' "$content" | grep -Eq -e "$PAT_SLACK_TOKEN"; then
-    fail "Slack トークン形式の文字列を検出しました: $file"
+    fail "Slack token pattern detected: $file"
   fi
   if printf '%s\n' "$content" | grep -Eq -e "$PAT_SK_TOKEN"; then
-    fail "API シークレットキー形式（sk-...）の文字列を検出しました: $file"
+    fail "API secret key pattern (sk-...) detected: $file"
   fi
   if [ "$file" != ".env.example" ] && printf '%s\n' "$content" | grep -Eq -e "$PAT_ENV_SECRET"; then
-    fail "API トークンの直接代入を検出しました: $file"
+    fail "Hardcoded API token assignment detected: $file"
   fi
 
-  # 3. メールアドレスチェック（RFC 予約の example.com/org/net は許可）
+  # 3. Check email addresses (RFC-reserved example.com/org/net are allowed)
   local email_hits
   email_hits="$(printf '%s\n' "$content" \
     | grep -Eo -e '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
     | grep -Eiv -e '@example\.(com|org|net)$' || true)"
   if [ -n "$email_hits" ]; then
-    fail "メールアドレスを検出しました（ダミー以外の実アドレスは禁止）: $file"
+    fail "Email address detected (only example.com/org/net placeholders are allowed): $file"
   fi
 
-  # 4. ローカル絶対パスチェック（ドキュメント例示の /Users/... 等は除外）
+  # 4. Check local absolute paths (allow documentation placeholders like /Users/...)
   local unix_path_hits
   unix_path_hits="$(printf '%s\n' "$content" \
     | grep -Eo -e '/(Users|home)/[A-Za-z0-9._-]+' \
     | grep -Ev -e '^/(Users|home)/\.\.\.$' || true)"
   if [ -n "$unix_path_hits" ]; then
-    fail "ローカル絶対パス（/Users/ または /home/）を検出しました: $file"
+    fail "Local absolute path (/Users/ or /home/) detected: $file"
   fi
 
   local win_path_hits
@@ -151,35 +151,35 @@ check_content() {
     | grep -Eio -e '[A-Za-z]:\\Users\\[A-Za-z0-9._-]+' \
     | grep -Eiv -e '^[A-Za-z]:\\Users\\\.\.\.$' || true)"
   if [ -n "$win_path_hits" ]; then
-    fail "Windows ローカル絶対パスを検出しました: $file"
+    fail "Windows local absolute path detected: $file"
   fi
 
   if [ -n "$CURRENT_USER" ] && [ "${#CURRENT_USER}" -ge 3 ]; then
     if printf '%s\n' "$content" | grep -Fq -- "/Users/$CURRENT_USER"; then
-      fail "現在のローカルユーザー名を含むパスを検出しました: $file"
+      fail "Path containing the current local username detected: $file"
     fi
   fi
 
-  # 5. SEC_USER_AGENT 等の実値一致チェック（値は絶対に表示しない）
+  # 5. Check exact matches against secret values from env/.env (never print values)
   if [ "$SECRET_COUNT" -gt 0 ]; then
     local secret
     for secret in "${SECRET_VALUES[@]}"; do
       if printf '%s\n' "$content" | grep -Fq -- "$secret"; then
-        fail "環境変数または .env に設定された秘密情報の実値を検出しました: $file"
+        fail "Secret value from environment variables or .env detected: $file"
       fi
     done
   fi
 
-  # 6. フロントエンド安全チェック（web/ 配下・同梱ライブラリ web/vendor/ は除外）
+  # 6. Frontend security check (under web/, excluding bundled web/vendor/)
   case "$file" in
     web/vendor/*)
       ;;
     web/*)
       if printf '%s\n' "$content" | grep -Eq -e "$PAT_UNSAFE_DOM"; then
-        fail "XSS 防止のため禁止されている DOM API の使用を検出しました: $file"
+        fail "Forbidden unsafe DOM API detected (XSS prevention): $file"
       fi
       if printf '%s\n' "$content" | grep -Eiq -e "$PAT_EXTERNAL_CDN"; then
-        fail "外部 CDN の読み込みを検出しました（web/vendor/ にローカル同梱してください）: $file"
+        fail "External CDN script reference detected (bundle locally under web/vendor/): $file"
       fi
       ;;
   esac
@@ -210,7 +210,7 @@ else
 fi
 
 if [ "$ERRORS" -gt 0 ]; then
-  echo "[pre-commit] 合計 ${ERRORS} 件の問題が見つかったためコミットを中止しました。" >&2
+  echo "[pre-commit] Commit aborted: ${ERRORS} issue(s) detected." >&2
   exit 1
 fi
 

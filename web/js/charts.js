@@ -1,7 +1,7 @@
 /**
- * Chart.js 描画ラッパーおよび軸フォーマッタ。
- * - ビュー切替時のメモリリーク防止のため、アクティブな Chart インスタンスを一元管理・破棄する。
- * - 浮動小数点誤差（例: 4.800000000000001%）を防ぐため、すべての軸目盛りを丸めて整形する。
+ * Chart.js rendering wrapper and axis formatters.
+ * - Centrally tracks and destroys active Chart instances on view switches to avoid memory leaks.
+ * - Rounds and formats all axis ticks cleanly to prevent floating-point artifacts (e.g. 4.800000000000001%).
  */
 
 const activeCharts = new Set();
@@ -11,7 +11,7 @@ export function destroyAllCharts() {
     try {
       chart.destroy();
     } catch {
-      // 破棄済みの場合は無視
+      // Ignore if already destroyed
     }
   }
   activeCharts.clear();
@@ -22,7 +22,7 @@ export function destroyChart(chart) {
   try {
     chart.destroy();
   } catch {
-    // 無視
+    // Ignore
   }
   activeCharts.delete(chart);
 }
@@ -150,7 +150,7 @@ export function baseChartOptions(yTickFormatter, rightYTickFormatter = null, ext
           generateLabels: (chart) => {
             const base = window.Chart.defaults.plugins.legend.labels.generateLabels(chart);
             for (const item of base) {
-              // 破線データセット（borderDash）の凡例枠線がギザギザに見えるのを防ぐ
+              // Prevent dashed datasets (borderDash) from rendering jagged legend borders
               item.lineDash = [];
               item.lineWidth = 0;
             }

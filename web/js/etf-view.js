@@ -1,9 +1,9 @@
 /**
  * ETF View (#/etf/<ETF_ID>)
- * - 基準日切替・サマリー KPI
- * - 列カスタマイズ可能な構成銘柄テーブル（プリセット + 個別 ON/OFF + ソート + 絞り込み）
- * - 基準日入替リスト & 全期間入替推移グラフ
- * - 保有期間マップ（Canvas ヒートマップ）
+ * - Reporting-date switcher & summary KPIs
+ * - Customizable holdings table (presets + column toggles + sorting + filtering)
+ * - Reporting-date additions/removals & full-history turnover chart
+ * - Holding tenure map (Canvas heatmap)
  */
 
 import { getEtfHoldings, getEtfSummary, getStocksIndex } from "./api.js";
@@ -31,7 +31,7 @@ import {
 
 const STORAGE_KEY_COLS = "etf_xray_visible_cols_v1";
 
-// カスタマイズ可能な指標列定義
+// Customizable metric column definitions
 const OPTIONAL_COLUMNS = [
   { key: "price", label: "Price", group: "Valuation", get: (r) => r.price, fmt: (v) => fmtPrice(v) },
   { key: "ttm_yield", label: "TTM Yield", group: "Dividend", get: (r) => r.m?.ttm_yield, fmt: (v) => fmtPct(v, 2) },
@@ -76,7 +76,7 @@ function loadSavedColumns() {
       }
     }
   } catch {
-    // localStorage 無効時は既定プリセットを使用
+    // Fall back to default preset when localStorage is unavailable
   }
   return new Set(COLUMN_PRESETS.Overview);
 }
@@ -85,7 +85,7 @@ function saveColumns(colSet) {
   try {
     localStorage.setItem(STORAGE_KEY_COLS, JSON.stringify([...colSet]));
   } catch {
-    // 無視
+    // Ignore
   }
 }
 
@@ -98,7 +98,7 @@ function detectActivePreset(colSet) {
   return null;
 }
 
-export async function renderEtfView(root, etfId, initialAsOf, navigate) {
+export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateChange = null) {
   destroyAllCharts();
   clearNode(root);
   root.appendChild(el("div", { className: "loading-box", text: `Loading ${etfId} holdings...` }));
@@ -124,11 +124,11 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
     holdingsData: null,
   };
 
-  // ルートコンテナ構造（Zone 1: Quarter Snapshot / Zone 2: Full History の 2 ゾーン分離）
+  // Root container layout (Zone 1: Quarter Snapshot / Zone 2: Full History)
   clearNode(root);
   const topHeaderContainer = el("div");
 
-  // Zone 1: 選択中の基準日に連動する要素だけを集約
+  // Zone 1: Components bound to the selected reporting date
   const snapshotZone = el("section", { className: "zone-block" });
   const snapshotHeader = el("div");
   const kpiContainer = el("div", { className: "kpi-grid" });
@@ -139,7 +139,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
   snapshotZone.appendChild(tableCard);
   snapshotZone.appendChild(changesCard);
 
-  // Zone 2: 全期間ヒストリー（グラフ選択基準日ハイライト＆クリックで Zone 1 と双方向連動）
+  // Zone 2: Full-history charts (syncs bidirectionally with Zone 1 via date highlight & clicks)
   const historyZone = el("section", { className: "zone-block" });
   const historyHeader = el("div", { className: "zone-header" }, [
     el("div", { className: "zone-title-wrap" }, [
@@ -194,6 +194,9 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
 
   async function selectDate(asOf, scrollToSnapshot = false) {
     selectedAsOf = asOf;
+    if (typeof onDateChange === "function") {
+      onDateChange(selectedAsOf, selectedAsOf === summary.latest_as_of);
+    }
     state.holdingsData = await getEtfHoldings(etfId, asOf);
     renderSnapshotHeader();
     renderKpis();
@@ -306,7 +309,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
     const activePreset = detectActivePreset(state.visibleCols);
     const activeOptCols = OPTIONAL_COLUMNS.filter((c) => state.visibleCols.has(c.key));
 
-    // 行データ組み立て & フィルタ
+    // Build & filter rows
     const q = state.filterText.trim().toLowerCase();
     const rows = hd.holdings
       .map((h) => ({
@@ -323,7 +326,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
         );
       });
 
-    // ソート
+    // Sort rows
     const optMap = new Map(OPTIONAL_COLUMNS.map((c) => [c.key, c]));
     const dir = state.sortDir === "asc" ? 1 : -1;
     rows.sort((a, b) => {
@@ -373,7 +376,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
       return state.sortDir === "asc" ? " ▲" : " ▼";
     }
 
-    // ヘッダ
+    // Header
     tableCard.appendChild(
       el("div", { className: "card-header" }, [
         el("h2", {
@@ -387,7 +390,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
       ])
     );
 
-    // プリセット & 列カスタマイズツールバー
+    // Preset & column customization toolbar
     const presetButtons = Object.keys(COLUMN_PRESETS).map((name) =>
       el("button", {
         type: "button",
@@ -448,7 +451,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
       onInput: (e) => {
         state.filterText = e.target.value;
         renderHoldingsCard();
-        // 入力フォーカスを維持
+        // Preserve input focus across re-renders
         const nextInput = tableCard.querySelector(".filter-input");
         if (nextInput) {
           nextInput.focus();
@@ -484,7 +487,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
       ])
     );
 
-    // テーブル本体
+    // Table body
     const theadRow = el("tr", {}, [
       el("th", { className: "num sortable", text: `#${sortMark("rank")}`, onClick: () => toggleSort("rank", "asc") }),
       el("th", { className: "sortable", text: `Ticker${sortMark("ticker")}`, onClick: () => toggleSort("ticker", "asc") }),
@@ -794,57 +797,115 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
 
     const statusLine = el("div", {
       className: "tenure-status",
-      text: "Hover over any row to inspect tenure; click to open Stock View.",
+      text: "Hover over any row to inspect tenure & quarter; click to open Stock View.",
     });
 
     const labelWidth = 84;
     const countWidth = 42;
     const cellW = 14;
     const rowH = 15;
-    const headerH = 26;
-    const totalW = labelWidth + countWidth + dateList.length * cellW + 16;
-    const totalH = headerH + items.length * rowH + 10;
-
-    const canvas = el("canvas", {
-      className: "tenure-canvas",
-      ariaLabel: "Constituent holding tenure heatmap",
-    });
+    const headerH = 28;
+    const totalW = labelWidth + countWidth + dateList.length * cellW + 36;
+    const bodyH = items.length * rowH + 10;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = totalW * dpr;
-    canvas.height = totalH * dpr;
-    canvas.style.width = `${totalW}px`;
-    canvas.style.height = `${totalH}px`;
 
-    const ctx = canvas.getContext("2d");
-    ctx.scale(dpr, dpr);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, totalW, totalH);
-
-    // 年次目盛りヘッダ
-    ctx.font = "600 10px -apple-system, BlinkMacSystemFont, sans-serif";
-    ctx.fillStyle = "#64748b";
-    ctx.fillText("Ticker", 8, 17);
-    ctx.fillText("Qtrs", labelWidth + 2, 17);
+    // Precompute year start column indices for ticks and faint vertical guides
+    const yearStarts = [];
     let lastYear = "";
     for (let i = 0; i < dateList.length; i++) {
       const yr = dateList[i].slice(0, 4);
       if (yr !== lastYear) {
-        ctx.fillText(yr, labelWidth + countWidth + i * cellW, 17);
+        yearStarts.push({ idx: i, year: yr });
         lastYear = yr;
       }
     }
-
-    // 選択中基準日の縦ハイライト帯を描画
     const selColIdx = dateList.indexOf(selectedAsOf);
+
+    // 1. Sticky year-header canvas (stays pinned at top during vertical scroll)
+    const headerCanvas = el("canvas", {
+      className: "tenure-header-canvas",
+      ariaLabel: "Holding tenure map year header",
+    });
+    headerCanvas.width = totalW * dpr;
+    headerCanvas.height = headerH * dpr;
+    headerCanvas.style.width = `${totalW}px`;
+    headerCanvas.style.height = `${headerH}px`;
+
+    const hctx = headerCanvas.getContext("2d");
+    hctx.scale(dpr, dpr);
+    hctx.fillStyle = "#f8fafc";
+    hctx.fillRect(0, 0, totalW, headerH);
+
     if (selColIdx >= 0) {
-      ctx.fillStyle = "rgba(37, 99, 235, 0.12)";
-      ctx.fillRect(labelWidth + countWidth + selColIdx * cellW, headerH, cellW, totalH - headerH);
+      const sx = labelWidth + countWidth + selColIdx * cellW;
+      hctx.fillStyle = "rgba(37, 99, 235, 0.16)";
+      hctx.fillRect(sx, 0, cellW, headerH);
+      hctx.fillStyle = "#2563eb";
+      hctx.fillRect(sx, headerH - 2, cellW, 2);
     }
 
-    // 行描画
+    hctx.font = "700 10px -apple-system, BlinkMacSystemFont, sans-serif";
+    hctx.fillStyle = "#475569";
+    hctx.fillText("Ticker", 8, 18);
+    hctx.fillText("Qtrs", labelWidth + 2, 18);
+
+    hctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    hctx.lineWidth = 1;
+    for (let yi = 0; yi < yearStarts.length; yi++) {
+      const ys = yearStarts[yi];
+      const x = labelWidth + countWidth + ys.idx * cellW;
+      const nextX =
+        yi + 1 < yearStarts.length
+          ? labelWidth + countWidth + yearStarts[yi + 1].idx * cellW
+          : totalW - 4;
+      const availW = nextX - x;
+
+      hctx.beginPath();
+      hctx.moveTo(x + 0.5, headerH - 6);
+      hctx.lineTo(x + 0.5, headerH);
+      hctx.stroke();
+
+      hctx.fillStyle = "#475569";
+      hctx.font = "700 10px -apple-system, BlinkMacSystemFont, sans-serif";
+      const fullW = hctx.measureText(ys.year).width;
+      if (availW >= fullW + 4) {
+        hctx.fillText(ys.year, x + 2, 18);
+      } else {
+        // Use compact 2-digit year (e.g. "19") for narrow 1-2 quarter partial years to prevent collisions
+        const shortLabel = ys.year.slice(2);
+        hctx.font = "700 9px -apple-system, BlinkMacSystemFont, sans-serif";
+        const shortW = hctx.measureText(shortLabel).width;
+        if (availW >= shortW + 2) {
+          hctx.fillText(shortLabel, x + Math.max(1, (availW - shortW) / 2), 18);
+        }
+      }
+    }
+
+    // 2. Scrollable rows body canvas
+    const canvas = el("canvas", {
+      className: "tenure-canvas",
+      ariaLabel: "Constituent holding tenure heatmap",
+    });
+    canvas.width = totalW * dpr;
+    canvas.height = bodyH * dpr;
+    canvas.style.width = `${totalW}px`;
+    canvas.style.height = `${bodyH}px`;
+
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, totalW, bodyH);
+
+    // Draw vertical highlight band for the selected reporting date
+    if (selColIdx >= 0) {
+      ctx.fillStyle = "rgba(37, 99, 235, 0.12)";
+      ctx.fillRect(labelWidth + countWidth + selColIdx * cellW, 0, cellW, bodyH);
+    }
+
+    // Draw tenure rows
     for (let r = 0; r < items.length; r++) {
       const item = items[r];
-      const y = headerH + r * rowH;
+      const y = r * rowH;
 
       if (r % 2 === 1) {
         ctx.fillStyle = "rgba(248, 250, 252, 0.65)";
@@ -866,30 +927,56 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
       }
     }
 
-    function rowAtEvent(ev) {
+    // Draw subtle vertical year-boundary guide lines across rows
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.28)";
+    ctx.lineWidth = 1;
+    for (const ys of yearStarts) {
+      const x = labelWidth + countWidth + ys.idx * cellW;
+      ctx.beginPath();
+      ctx.moveTo(x + 0.5, 0);
+      ctx.lineTo(x + 0.5, bodyH);
+      ctx.stroke();
+    }
+
+    // Precompute index Sets for instant hover held/not-held lookup
+    const heldSets = items.map((item) => new Set(item.date_indices));
+
+    function hitAtEvent(ev) {
       const rect = canvas.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
       const y = ev.clientY - rect.top;
-      const idx = Math.floor((y - headerH) / rowH);
+      const idx = Math.floor(y / rowH);
       if (idx < 0 || idx >= items.length) return null;
-      return items[idx];
+      const col = Math.floor((x - (labelWidth + countWidth)) / cellW);
+      const colIdx = col >= 0 && col < dateList.length ? col : -1;
+      return { item: items[idx], heldSet: heldSets[idx], colIdx };
     }
 
     canvas.addEventListener("mousemove", (ev) => {
-      const item = rowAtEvent(ev);
-      if (!item) {
-        statusLine.textContent = "Hover over any row to inspect tenure; click to open Stock View.";
+      const hit = hitAtEvent(ev);
+      if (!hit) {
+        statusLine.textContent = "Hover over any row to inspect tenure & quarter; click to open Stock View.";
         return;
       }
+      const { item, heldSet, colIdx } = hit;
       const status = item.in_latest
         ? `Current holding (${fmtPct(item.latest_weight, 2)})`
         : "Former holding";
-      statusLine.textContent = `${item.ticker || item.security_id} — ${item.name} | ${item.quarters_held}/${dateList.length} quarters (${item.first_seen} to ${item.last_seen}) · ${status}`;
+      const cursorInfo =
+        colIdx >= 0
+          ? ` | Quarter ${dateList[colIdx]}: ${heldSet.has(colIdx) ? "Held" : "Not held"}`
+          : "";
+      statusLine.textContent = `${item.ticker || item.security_id} — ${item.name} | ${item.quarters_held}/${dateList.length} quarters (${item.first_seen} to ${item.last_seen}) · ${status}${cursorInfo}`;
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+      statusLine.textContent = "Hover over any row to inspect tenure & quarter; click to open Stock View.";
     });
 
     canvas.addEventListener("click", (ev) => {
-      const item = rowAtEvent(ev);
-      if (item) {
-        navigate(`#/stock/${encodeURIComponent(item.security_id)}`);
+      const hit = hitAtEvent(ev);
+      if (hit) {
+        navigate(`#/stock/${encodeURIComponent(hit.item.security_id)}`);
       }
     });
 
@@ -901,13 +988,13 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate) {
     );
     tenureCard.appendChild(
       el("div", { className: "card-body" }, [
-        el("div", { className: "tenure-canvas-wrap" }, [canvas]),
+        el("div", { className: "tenure-canvas-wrap" }, [headerCanvas, canvas]),
         statusLine,
       ])
     );
   }
 
-  // ポップオーバー外クリックで閉じる
+  // Close column popover when clicking outside
   const closePopoverHandler = (ev) => {
     if (state.popoverOpen && !ev.target.closest(".col-menu-wrap")) {
       state.popoverOpen = false;

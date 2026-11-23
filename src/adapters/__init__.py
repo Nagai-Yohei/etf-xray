@@ -1,1 +1,1 @@
-"""ETF 構成銘柄取得アダプタパッケージ。"""
+"""ETF constituent filing adapter package."""

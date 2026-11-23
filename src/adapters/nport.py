@@ -1,8 +1,9 @@
-"""共通 N-PORT-P（XML）アダプタ（2019年〜）。
+"""Shared N-PORT-P (XML) adapter (2019-present).
 
-AGENTS.md ルール:
-- assetCat == "EC" かつ payoffProfile == "Long" のみ普通株として抽出（MMF・先物・貸株担保は除外）。
-- 外国籍銘柄は CUSIP が "000000000" のため ISIN を使用する。
+AGENTS.md rules:
+- Extract common equity long positions only (assetCat == "EC" and payoffProfile == "Long"),
+  excluding MMFs, futures, and securities-lending collateral.
+- Fall back to ISIN for foreign issuers where CUSIP is "000000000".
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from src.edgar import EdgarClient, normalize_cik
 
 @dataclass
 class RawHolding:
-    """アダプタが書類から抽出した 1 銘柄分の生データ。"""
+    """Raw single-security record extracted from a filing by an adapter."""
 
     reported_name: str
     shares: float
@@ -29,7 +30,7 @@ class RawHolding:
 
 @dataclass
 class FilingHoldings:
-    """1 基準日分の保有明細セット。"""
+    """Complete set of holdings for a single reporting date."""
 
     etf_id: str
     as_of: str
@@ -69,7 +70,7 @@ def parse_nport_xml(
     accession: str,
     filed: str,
 ) -> FilingHoldings:
-    """N-PORT-P の primary_doc.xml を解析して普通株ロング保有明細を返す。"""
+    """Parse N-PORT-P primary_doc.xml and return common equity long holdings."""
     parser = etree.XMLParser(recover=False, resolve_entities=False, no_network=True)
     root = etree.fromstring(xml_bytes, parser=parser)
 
@@ -95,7 +96,7 @@ def parse_nport_xml(
     if invst_or_secs is None:
         raise ValueError(f"N-PORT-P XML missing invstOrSecs: {accession}")
 
-    # 同一識別子の複数ロットがあれば合算する
+    # Aggregate multiple lots sharing the same security identifier
     merged: dict[str, RawHolding] = {}
     for item in invst_or_secs:
         if _local_name(item.tag) != "invstOrSec":
@@ -138,7 +139,7 @@ def parse_nport_xml(
         if shares <= 0 or value_usd <= 0:
             continue
 
-        # N-PORT の pctVal はパーセント表記（例: 4.12 = 4.12%）なので比率（0.0412）に正規化
+        # Normalize N-PORT pctVal from percentage (e.g. 4.12 = 4.12%) to decimal ratio (0.0412)
         pct_net = (float(pct_val_str) / 100.0) if pct_val_str else None
 
         merge_key = cusip or isin or f"NAME:{name.upper()}"
@@ -180,7 +181,7 @@ def fetch_etf_nport_filings(
     client: EdgarClient,
     etf_cfg: dict[str, Any],
 ) -> list[FilingHoldings]:
-    """対象 ETF の全 N-PORT-P を取得・解析して基準日昇順で返す。"""
+    """Fetch and parse all N-PORT-P filings for the target ETF, sorted by reporting date."""
     etf_id = etf_cfg["etf_id"]
     cik = normalize_cik(etf_cfg["cik"])
     series_id = etf_cfg["series_id"]
@@ -189,7 +190,7 @@ def fetch_etf_nport_filings(
     all_nport = client.get_all_filings(cik, forms={"NPORT-P", "NPORT-P/A"})
     by_accn = {f["accessionNumber"]: f for f in all_nport}
 
-    # EFTS で対象ファンド名が primary_doc.xml に含まれる提出を絞り込む
+    # Filter candidate filings whose primary_doc.xml contains the target fund name via EFTS
     candidate_accns: dict[str, dict[str, str]] = {}
     for idx, pat in enumerate(patterns):
         cache_key = f"{etf_id}_nport_name" if idx == 0 else f"{etf_id}_nport_name_{idx}"
@@ -200,7 +201,7 @@ def fetch_etf_nport_filings(
             if adsh in by_accn and hid.endswith("primary_doc.xml"):
                 candidate_accns[adsh] = by_accn[adsh]
 
-    # 同一 reportDate に修正申告（NPORT-P/A）等がある場合は最新の filingDate を優先
+    # Prefer the latest filingDate when amendments (NPORT-P/A) exist for the same reportDate
     by_as_of: dict[str, FilingHoldings] = {}
     for accn, meta in sorted(
         candidate_accns.items(),
@@ -217,7 +218,7 @@ def fetch_etf_nport_filings(
                 filed=meta["filingDate"],
             )
         except ValueError as exc:
-            # 名前が偶然一致した他シリーズであればスキップし、それ以外は伝播させる
+            # Skip unrelated series whose names matched incidentally; re-raise all other errors
             if "Series ID mismatch" in str(exc):
                 continue
             raise

@@ -1,9 +1,9 @@
-"""SEC EDGAR HTTP クライアント。
+"""SEC EDGAR HTTP client.
 
-- 5 req/s 以下にレート制限する（既定 0.22 秒間隔）
-- data/raw/edgar/ にレスポンスをローカルキャッシュする
-- 429 / 5xx や一時的な通信エラーは指数バックオフで再試行する
-- SEC_USER_AGENT 未設定時は外部アクセスせず明示エラーで停止する
+- Rate-limited to <= 5 req/s (default 0.22s interval)
+- Local disk response cache under data/raw/edgar/
+- Exponential backoff retry on HTTP 429 / 5xx and transient network errors
+- Fails fast without network access if SEC_USER_AGENT is unset or a placeholder
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def normalize_cik(cik: int | str) -> str:
-    """CIK を 10 桁ゼロ埋め文字列に正規化する。"""
+    """Normalize a CIK into a 10-digit zero-padded string."""
     digits = "".join(ch for ch in str(cik) if ch.isdigit())
     if not digits:
         raise ValueError(f"Invalid CIK: {cik!r}")
@@ -38,7 +38,7 @@ def normalize_cik(cik: int | str) -> str:
 
 
 class EdgarClient:
-    """レート制限とディスクキャッシュを備えた SEC EDGAR クライアント。"""
+    """Rate-limited, disk-cached SEC EDGAR HTTP client."""
 
     def __init__(
         self,
@@ -56,7 +56,7 @@ class EdgarClient:
 
     def _get_session(self) -> requests.Session:
         if self._session is None:
-            # 外部アクセス直前に SEC_USER_AGENT を必須検証する
+            # Validate SEC_USER_AGENT immediately before any outbound request
             user_agent = get_sec_user_agent()
             session = requests.Session()
             session.headers.update(
@@ -80,7 +80,7 @@ class EdgarClient:
         force_refresh: bool = False,
         offline_only: bool = False,
     ) -> bytes:
-        """URL からバイト列を取得し、data/raw/edgar 配下にキャッシュする。"""
+        """Fetch raw bytes from URL and cache under data/raw/edgar."""
         cache_path = self.cache_dir / cache_rel_path
         not_found_marker = cache_path.with_suffix(cache_path.suffix + ".404")
         if not force_refresh:
@@ -155,7 +155,7 @@ class EdgarClient:
         return json.loads(raw.decode("utf-8"))
 
     def get_company_tickers(self, force_refresh: bool = False) -> dict[str, dict[str, Any]]:
-        """SEC 公式のティッカー ↔ CIK 対応表を取得する。"""
+        """Fetch SEC's official ticker-to-CIK mapping JSON."""
         return self.fetch_json(
             COMPANY_TICKERS_URL,
             "company_tickers.json",
@@ -163,7 +163,7 @@ class EdgarClient:
         )
 
     def build_ticker_to_cik_map(self, force_refresh: bool = False) -> dict[str, str]:
-        """ティッカー（大文字）→ 10桁 CIK の辞書を返す。"""
+        """Return a mapping of uppercase ticker to 10-digit CIK."""
         raw = self.get_company_tickers(force_refresh=force_refresh)
         mapping: dict[str, str] = {}
         for item in raw.values():
@@ -179,7 +179,7 @@ class EdgarClient:
         force_refresh: bool = False,
         offline_only: bool = False,
     ) -> dict[str, Any]:
-        """指定 CIK の XBRL companyfacts JSON を取得する。"""
+        """Fetch XBRL companyfacts JSON for the given CIK."""
         cik10 = normalize_cik(cik)
         url = COMPANY_FACTS_URL.format(cik=cik10)
         return self.fetch_json(
@@ -190,7 +190,7 @@ class EdgarClient:
         )
 
     def get_submissions(self, cik: int | str, force_refresh: bool = False) -> dict[str, Any]:
-        """指定 CIK の提出書類一覧（submissions JSON）を取得する。"""
+        """Fetch the submissions JSON listing filings for the given CIK."""
         cik10 = normalize_cik(cik)
         url = SUBMISSIONS_URL.format(cik=cik10)
         return self.fetch_json(
@@ -205,7 +205,7 @@ class EdgarClient:
         forms: set[str] | None = None,
         force_refresh: bool = False,
     ) -> list[dict[str, str]]:
-        """recent と過去アーカイブ JSON をすべて結合した提出書類リストを返す。"""
+        """Return all filings combining recent and historical archive submission files."""
         sub = self.get_submissions(cik, force_refresh=force_refresh)
         chunks: list[dict[str, list[Any]]] = []
         recent = (sub.get("filings") or {}).get("recent")
@@ -251,7 +251,7 @@ class EdgarClient:
         accession: str,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
-        """提出書類ディレクトリの index.json を取得する。"""
+        """Fetch index.json for a filing directory."""
         cik_int = int(normalize_cik(cik))
         acc_nodash = accession.replace("-", "")
         url = ARCHIVE_INDEX_URL.format(cik_int=cik_int, acc_nodash=acc_nodash)
@@ -268,10 +268,10 @@ class EdgarClient:
         doc_name: str,
         force_refresh: bool = False,
     ) -> bytes:
-        """提出書類内の個別ドキュメント（XML / HTML 等）を取得する。"""
+        """Fetch an individual document (XML / HTML, etc.) from a filing."""
         cik_int = int(normalize_cik(cik))
         acc_nodash = accession.replace("-", "")
-        # doc_name に XSL プレフィックス（例: xslFormNPORT-P_X01/primary_doc.xml）がある場合は除去
+        # Strip XSL prefix if present (e.g. xslFormNPORT-P_X01/primary_doc.xml)
         clean_name = doc_name.split("/")[-1]
         url = ARCHIVE_DOC_URL.format(
             cik_int=cik_int,
@@ -291,7 +291,7 @@ class EdgarClient:
         cache_key: str,
         force_refresh: bool = False,
     ) -> list[dict[str, Any]]:
-        """SEC EDGAR 公式全文検索（EFTS）で該当提出の accession 一覧を取得する。"""
+        """Search SEC EDGAR EFTS full-text index for matching filing accessions."""
         from urllib.parse import urlencode
 
         all_hits: list[dict[str, Any]] = []

@@ -1,15 +1,15 @@
-"""ティッカー・CIK・security_id 解決および名寄せエンジン。
+"""Ticker, CIK, and security_id entity resolution engine.
 
-AGENTS.md 優先順:
-1. config/manual_tickers.csv（CUSIP 指定）
-2. OpenFIGI（CUSIP / ISIN）
-3. 旧書類の名寄せ（N-PORT 確定銘柄の正規化社名からの引継ぎ）
-4. config/manual_tickers.csv（名前指定）
-5. SEC company_tickers.json（社名正規化マッチ）
+AGENTS.md resolution priority:
+1. config/manual_tickers.csv (CUSIP override)
+2. OpenFIGI (CUSIP / ISIN)
+3. Legacy filing name bridge (unambiguous normalized names from N-PORT holdings)
+4. config/manual_tickers.csv (name override)
+5. SEC company_tickers.json (normalized name match)
 
-必須制約:
-- 同一基準日・同一 ETF 内で security_id が重複したら例外を送出する。
-- 株式クラス違い（例: CWEN / CWEN.A）は CUSIP 指定等で区別する。
+Required invariants:
+- Raise an exception if duplicate security_ids appear within the same (etf_id, as_of).
+- Disambiguate dual-class shares (e.g. CWEN / CWEN.A) via CUSIP or exact manual overrides.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ MANUAL_TICKERS_PATH = CONFIG_DIR / "manual_tickers.csv"
 OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 OPENFIGI_CACHE_PATH = RAW_DIR / "openfigi" / "cache.json"
 
-# 米国取引所の優先順（US = 米国コンポジットを最優先）
+# U.S. exchange priority (US = U.S. composite preferred first)
 US_EXCHANGE_PRIORITY = {
     "US": 0,
     "UN": 1,  # NYSE
@@ -47,9 +47,9 @@ US_EXCHANGE_PRIORITY = {
 
 _PUNCT_RE = re.compile(r"[^a-z0-9&/\s]+")
 _SPACE_RE = re.compile(r"\s+")
-# SEC 社名末尾の州コード・修飾子（例: /DE/, /NEW/, /OH/, /MD/, 末尾の単独 /）
+# Trailing SEC state codes / qualifiers (e.g. /DE/, /NEW/, /OH/, /MD/, trailing /)
 _SEC_SLASH_SUFFIX_RE = re.compile(r"(?:\s*/[A-Za-z0-9]{1,5}/?|\s*/)+$")
-# 法人格サフィックス（社名照合時のみ除去）
+# Legal entity suffixes stripped during normalized company-name matching
 _CORP_SUFFIX_RE = re.compile(
     r"(?:\s+(?:inc|incorporated|corp|corporation|co|company|cos|companies|ltd|limited|plc|nv|sa|lp|llc|holdings|holding|group))+$"
 )
@@ -61,7 +61,7 @@ _CLASS_SUFFIX_RE = re.compile(
 
 @dataclass
 class ResolvedHolding:
-    """識別子解決済みの 1 銘柄データ。"""
+    """Single holding record with resolved security identifiers."""
 
     security_id: str
     ticker: str | None
@@ -83,7 +83,7 @@ def normalize_ticker(raw_ticker: str | None) -> str | None:
     t = raw_ticker.strip().upper()
     if not t:
         return None
-    # OpenFIGI のスラッシュ表記（BF/B, CWEN/A）や SEC のハイフン表記（BF-B）をドット表記に統一
+    # Normalize OpenFIGI slash notation (BF/B, CWEN/A) and SEC hyphen notation (BF-B) to dot notation
     t = t.replace("/", ".").replace("-", ".")
     return t
 
@@ -93,15 +93,15 @@ def normalize_company_name(
     strip_corp: bool = True,
     strip_class: bool = False,
 ) -> str:
-    """社名照合用の正規化キーを生成する（既定では株式クラス情報を保持）。"""
+    """Build a normalized company-name key (retains share-class suffixes by default)."""
     s = name.strip()
-    # 末尾の "/The" や先頭の "The " を除去
+    # Strip trailing "/The" or leading "The "
     s = re.sub(r"/\s*The$", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(r"^The\s+", "", s, flags=re.IGNORECASE).strip()
-    # SEC 固有の末尾州コード等（例: /DE/, /NEW/）を除去
+    # Strip SEC trailing state/qualifier suffixes (e.g. /DE/, /NEW/)
     s = _SEC_SLASH_SUFFIX_RE.sub("", s).strip()
 
-    # 株式クラス（Class A / Cl A / Non Voting 等）を一時退避
+    # Temporarily extract share class (Class A / Cl A / Non Voting, etc.)
     share_class = ""
     m_cls = _CLASS_SUFFIX_RE.search(s)
     if m_cls:
@@ -110,7 +110,7 @@ def normalize_company_name(
         s = s[: m_cls.start()].strip()
 
     s = s.lower()
-    # アポストロフィ（McDonald's → mcdonalds）は区切らず削除
+    # Remove apostrophes without inserting spaces (McDonald's -> mcdonalds)
     s = s.replace("'", "").replace("’", "")
     s = s.replace("&", " and ")
     s = _PUNCT_RE.sub(" ", s)
@@ -128,7 +128,7 @@ def normalize_company_name(
 def load_manual_tickers(
     path: Path = MANUAL_TICKERS_PATH,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-    """manual_tickers.csv を読み込み、(cusip_map, exact_name_map, norm_name_map) を返す。"""
+    """Load manual_tickers.csv and return (cusip_map, exact_name_map, norm_name_map)."""
     by_cusip: dict[str, str] = {}
     by_exact_name: dict[str, str] = {}
     by_norm_name: dict[str, str] = {}
@@ -155,7 +155,7 @@ def load_manual_tickers(
 
 
 class OpenFigiClient:
-    """キャッシュ付き OpenFIGI マッピングクライアント。"""
+    """Disk-cached OpenFIGI mapping API client."""
 
     def __init__(self, cache_path: Path = OPENFIGI_CACHE_PATH) -> None:
         self.cache_path = cache_path
@@ -197,7 +197,7 @@ class OpenFigiClient:
         return best[2] if best else None
 
     def resolve_batch(self, queries: list[tuple[str, str]]) -> None:
-        """未キャッシュの (idType, idValue) ペアを OpenFIGI API で一括解決してキャッシュ保存する。"""
+        """Batch-resolve uncached (idType, idValue) pairs via OpenFIGI API and persist to cache."""
         missing: list[tuple[str, str]] = []
         seen: set[str] = set()
         for id_type, id_val in queries:
@@ -210,7 +210,7 @@ class OpenFigiClient:
         if not missing:
             return
 
-        # 無料枠は 1 リクエスト 10 件まで / API キーありなら 100 件まで
+        # Free tier allows 10 jobs/request; authenticated API key allows 100 jobs/request
         batch_size = 100 if self.api_key else 10
         min_wait = 0.35 if self.api_key else 2.6
 
@@ -249,7 +249,7 @@ class OpenFigiClient:
             if resp_data is None:
                 raise RuntimeError("OpenFIGI API failed after retries")
 
-            # exchCode=US で空だった項目について取引所指定なしで再照会（一部 ADR/ISIN 対策）
+            # Retry items returning empty with exchCode=US without an exchange filter (for some ADRs/ISINs)
             retry_no_exch: list[tuple[int, str, str]] = []
             for idx, ((id_type, id_val), entry) in enumerate(zip(batch, resp_data)):
                 cache_key = f"{id_type}:{id_val}"
@@ -284,7 +284,7 @@ class OpenFigiClient:
                 except requests.RequestException:
                     pass
 
-            # バッチごとに途中保存して中断耐性を確保
+            # Save cache incrementally after each batch for crash resilience
             self._save_cache()
             if start + batch_size < len(missing):
                 time.sleep(min_wait)
@@ -304,7 +304,7 @@ class OpenFigiClient:
 def _build_sec_maps(
     client: EdgarClient,
 ) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
-    """SEC company_tickers.json から (ticker->cik, norm_name->(ticker, cik)) を構築する。"""
+    """Build (ticker->cik, norm_name->(ticker, cik)) maps from SEC company_tickers.json."""
     raw = client.get_company_tickers()
     ticker_to_cik: dict[str, str] = {}
     name_to_sec: dict[str, tuple[str, str]] = {}
@@ -317,7 +317,7 @@ def _build_sec_maps(
             continue
         cik10 = normalize_cik(cik_raw)
         ticker_to_cik[ticker] = cik10
-        # ドット ↔ ハイフン表記（例: BF-B ↔ BF.B）の両方で引けるように登録
+        # Register both dot and hyphen variants (e.g. BF-B <-> BF.B)
         if "-" in ticker:
             ticker_to_cik.setdefault(ticker.replace("-", "."), cik10)
         if "." in ticker:
@@ -336,12 +336,12 @@ def resolve_all_filings(
     client: EdgarClient,
     filings: list[FilingHoldings],
 ) -> tuple[dict[str, list[ResolvedHolding]], dict[str, dict[str, Any]]]:
-    """全基準日の保有明細を一括解決し、(by_as_of_holdings, securities_catalog) を返す。"""
+    """Resolve holdings across all reporting dates and return (by_as_of_holdings, securities_catalog)."""
     manual_cusip, manual_exact_name, manual_norm_name = load_manual_tickers()
     ticker_to_cik, sec_name_map = _build_sec_maps(client)
     figi = OpenFigiClient()
 
-    # 1. N-PORT 等（CUSIP / ISIN がある銘柄）の OpenFIGI クエリを収集して一括解決
+    # 1. Collect and batch-resolve OpenFIGI queries for filings with CUSIP / ISIN (N-PORT, etc.)
     figi_queries: list[tuple[str, str]] = []
     for filing in filings:
         for h in filing.holdings:
@@ -353,9 +353,9 @@ def resolve_all_filings(
                 figi_queries.append(("ID_ISIN", h.isin))
     figi.resolve_batch(figi_queries)
 
-    # 2. パス 1: CUSIP / ISIN を持つ提出（N-PORT）から社名 → (ticker, cusip, isin) の名寄せ辞書を構築
-    #    複数ティッカーが同一正規化社名に衝突する銘柄（例: GOOG/GOOGL, FOX/FOXA, BRK.A/BRK.B, CWEN/CWEN.A）は
-    #    誤名寄せを防ぐため曖昧キーとして除外する
+    # 2. Pass 1: Build a normalized-name bridge from filings with CUSIP / ISIN (N-PORT).
+    #    Exclude ambiguous keys shared by multiple tickers (e.g. GOOG/GOOGL, FOX/FOXA, BRK.A/BRK.B, CWEN/CWEN.A)
+    #    to prevent misattribution.
     nport_name_bridge: dict[str, tuple[str, str | None, str | None]] = {}
     nport_name_tickers: dict[str, set[str]] = {}
     for filing in sorted(filings, key=lambda f: f.as_of, reverse=True):
@@ -384,7 +384,7 @@ def resolve_all_filings(
         if len(tset) > 1:
             nport_name_bridge.pop(nk, None)
 
-    # 3. パス 2: 全基準日の全保有銘柄を優先順位に従って解決
+    # 3. Pass 2: Resolve every holding across all reporting dates following priority order
     resolved_by_as_of: dict[str, list[ResolvedHolding]] = {}
     securities_catalog: dict[str, dict[str, Any]] = {}
 
@@ -400,26 +400,26 @@ def resolve_all_filings(
             isin = h.isin
             cik: str | None = None
 
-            # 優先 1: manual_tickers.csv（CUSIP 指定）
+            # Priority 1: manual_tickers.csv (CUSIP override)
             if cusip and cusip in manual_cusip:
                 ticker = manual_cusip[cusip]
                 source = "manual_cusip"
 
-            # 優先 2: OpenFIGI（CUSIP / ISIN）
+            # Priority 2: OpenFIGI (CUSIP / ISIN)
             if ticker is None and (cusip or isin):
                 figi_ticker = figi.lookup(cusip, isin)
                 if figi_ticker:
                     ticker = figi_ticker
                     source = "openfigi"
 
-            # 優先 3a: 旧書類の完全一致手動オーバーライド（同一社名・別クラス/旧法人の厳密区別）
+            # Priority 3a: Exact-name manual override for legacy filings (disambiguates classes / legacy entities)
             if ticker is None and not cusip and not isin:
                 low = h.reported_name.lower()
                 if low in manual_exact_name:
                     ticker = manual_exact_name[low]
                     source = "manual_name"
 
-            # 優先 3b: 旧書類の名寄せ（株式クラス一致を優先）
+            # Priority 3b: Legacy name bridge (preserving share class)
             if ticker is None and not cusip and not isin:
                 for strip_corp in (False, True):
                     nk = normalize_company_name(
@@ -433,7 +433,7 @@ def resolve_all_filings(
                         source = "legacy_bridge"
                         break
 
-            # 優先 4a: manual_tickers.csv（名前指定・株式クラス一致）
+            # Priority 4a: manual_tickers.csv (name match preserving share class)
             if ticker is None:
                 low = h.reported_name.lower()
                 if low in manual_exact_name:
@@ -449,7 +449,7 @@ def resolve_all_filings(
                             source = "manual_name"
                             break
 
-            # 優先 3c: 旧書類の名寄せ（単一クラス銘柄の "Class A" 表記ゆれ吸収）
+            # Priority 3c: Legacy name bridge (ignoring "Class A" suffix on single-class issuers)
             if ticker is None and not cusip and not isin:
                 for strip_corp in (False, True):
                     nk = normalize_company_name(
@@ -463,7 +463,7 @@ def resolve_all_filings(
                         source = "legacy_bridge"
                         break
 
-            # 優先 4b: manual_tickers.csv（名前指定・クラス除去フォールバック）
+            # Priority 4b: manual_tickers.csv (name match ignoring share class fallback)
             if ticker is None:
                 for strip_corp in (False, True):
                     nk = normalize_company_name(
@@ -474,7 +474,7 @@ def resolve_all_filings(
                         source = "manual_name"
                         break
 
-            # 優先 5: SEC company_tickers.json（社名正規化マッチ）
+            # Priority 5: SEC company_tickers.json (normalized company-name match)
             if ticker is None:
                 for strip_class in (False, True):
                     for strip_corp in (False, True):
@@ -488,13 +488,13 @@ def resolve_all_filings(
                     if ticker is not None:
                         break
 
-            # CIK の解決（ドット付きクラス株で直接一致しなければ親ティッカーでも照合）
+            # Resolve CIK (fall back to parent ticker for dotted share classes if needed)
             if cik is None and ticker:
                 cik = ticker_to_cik.get(ticker) or ticker_to_cik.get(ticker.replace(".", "-"))
                 if cik is None and "." in ticker:
                     cik = ticker_to_cik.get(ticker.split(".", 1)[0])
 
-            # security_id の確定
+            # Assign canonical security_id
             if ticker:
                 security_id = ticker
             elif cusip:
@@ -507,7 +507,7 @@ def resolve_all_filings(
                 ).hexdigest()[:8].upper()
                 security_id = f"UNK_{digest}"
 
-            # AGENTS.md 必須チェック: 同一基準日・同一 ETF 内で security_id が重複したら例外
+            # Required check: raise on duplicate security_id within the same (etf_id, as_of)
             if security_id in seen_ids:
                 raise ValueError(
                     f"Duplicate security_id {security_id!r} in {filing.etf_id} on {filing.as_of} "
@@ -533,7 +533,7 @@ def resolve_all_filings(
                 )
             )
 
-            # securities マスタの更新（新しい基準日の表記・識別子で最新化）
+            # Update securities catalog (prefer newer reporting date names and identifiers)
             if security_id not in securities_catalog:
                 securities_catalog[security_id] = {
                     "security_id": security_id,

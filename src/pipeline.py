@@ -1,9 +1,9 @@
-"""etf-xray 全データパイプラインのオーケストレータ。
+"""Orchestrator for the full etf-xray data pipeline.
 
-実行例:
-    python -m src.pipeline                # 全ステップ実行（ETF取得 → XBRL → 指標 → dist出力）
-    python -m src.pipeline --skip-xbrl    # ETF構成のみ更新
-    python -m src.pipeline --only-export  # DB から dist/data のみ再出力
+Examples:
+    python -m src.pipeline                # Run all steps (ETF fetch -> XBRL -> metrics -> dist export)
+    python -m src.pipeline --skip-xbrl    # Update ETF holdings only
+    python -m src.pipeline --only-export  # Re-export dist/data from SQLite DB only
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def load_etf_configs(path: Path = ETFS_CONFIG_PATH) -> list[dict[str, Any]]:
 
 
 def fetch_etf_filings(client: EdgarClient, etf_cfg: dict[str, Any]) -> list[FilingHoldings]:
-    """ETF 設定に従い、旧書類アダプタ + 共通 N-PORT-P アダプタで全基準日を取得する。"""
+    """Fetch all reporting dates for an ETF using its legacy adapter plus the N-PORT-P adapter."""
     filings: list[FilingHoldings] = []
     legacy_name = etf_cfg.get("legacy_adapter")
     if legacy_name == "schwab_legacy":
@@ -49,7 +49,7 @@ def fetch_etf_filings(client: EdgarClient, etf_cfg: dict[str, Any]) -> list[Fili
 
     nport_filings = fetch_etf_nport_filings(client, etf_cfg)
 
-    # 同一基準日が重複した場合は N-PORT-P を優先
+    # Prefer N-PORT-P when the same reporting date appears in both sources
     by_as_of: dict[str, FilingHoldings] = {}
     for f in filings:
         by_as_of[f.as_of] = f
@@ -66,10 +66,10 @@ def save_etf_and_holdings(
     resolved_by_as_of: dict[str, list[ResolvedHolding]],
     securities_catalog: dict[str, dict[str, Any]],
 ) -> None:
-    """ETF 構成データと銘柄マスタを SQLite に保存し、入替履歴（etf_changes）を構築する。"""
+    """Save ETF holdings and security metadata to SQLite, and rebuild etf_changes history."""
     etf_id = etf_cfg["etf_id"]
 
-    # 1. etfs テーブル UPSERT
+    # 1. Upsert etfs table
     conn.execute(
         """
         INSERT INTO etfs (etf_id, name, issuer, cik, series_id, structure, fiscal_year_end_month, active)
@@ -95,7 +95,7 @@ def save_etf_and_holdings(
         ),
     )
 
-    # 2. securities テーブル UPSERT（複数 ETF 間で first_seen/last_seen を統合）
+    # 2. Upsert securities table (merging first_seen/last_seen across ETFs)
     for sec in securities_catalog.values():
         conn.execute(
             """
@@ -127,7 +127,7 @@ def save_etf_and_holdings(
             ),
         )
 
-    # 3. 対象 ETF の既存保有・入替・基準日を洗い替え
+    # 3. Replace existing holdings, changes, and dates for the target ETF
     conn.execute("DELETE FROM etf_changes WHERE etf_id = ?", (etf_id,))
     conn.execute("DELETE FROM etf_holdings WHERE etf_id = ?", (etf_id,))
     conn.execute("DELETE FROM etf_dates WHERE etf_id = ?", (etf_id,))
@@ -180,7 +180,7 @@ def save_etf_and_holdings(
             holding_tuples,
         )
 
-        # 前回基準日との差分から追加・除外を記録
+        # Record additions and removals relative to the previous reporting date
         if prev_holdings_map is not None:
             added_ids = sorted(set(cur_map) - set(prev_holdings_map))
             removed_ids = sorted(set(prev_holdings_map) - set(cur_map))
@@ -210,7 +210,7 @@ def update_fundamentals(
     client: EdgarClient,
     offline_only: bool = False,
 ) -> tuple[int, int]:
-    """CIK を持つ全銘柄の SEC XBRL 財務データ（年次・TTM）を取得して DB に保存する。"""
+    """Fetch SEC XBRL annual, quarterly, and TTM fundamentals for all securities with a CIK."""
     targets = conn.execute(
         """
         SELECT security_id, ticker, cik
@@ -220,7 +220,7 @@ def update_fundamentals(
         """
     ).fetchall()
 
-    # 同一 CIK（例: 株式クラス違い CWEN / CWEN.A）は 1 回だけ抽出して共有する
+    # Extract once per CIK and share across dual-class securities (e.g. CWEN / CWEN.A)
     facts_cache: dict[
         str, tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]
     ] = {}
@@ -239,7 +239,7 @@ def update_fundamentals(
                 ttm_row = extract_ttm_financials(raw_facts, ann_rows)
                 facts_cache[cik] = (ann_rows, q_rows, ttm_row)
             except RuntimeError as exc:
-                # HTTP 404 または offline 時の未キャッシュはスキップし、ネットワーク障害等は即停止する
+                # Skip HTTP 404 or offline cache misses, but fail fast on network errors
                 msg = str(exc)
                 if "HTTP 404" in msg or (offline_only and "offline mode" in msg):
                     facts_cache[cik] = ([], [], None)
@@ -407,7 +407,7 @@ def main() -> int:
                 )
                 save_etf_and_holdings(conn, cfg, filings, resolved_by_as_of, catalog)
 
-            # どの ETF にも属さなくなった孤立 securities を子テーブルごとクリーンアップ
+            # Clean up orphaned securities and child rows no longer held by any ETF
             orphan_sql = """
                 SELECT security_id FROM securities
                 WHERE security_id NOT IN (SELECT DISTINCT security_id FROM etf_holdings)

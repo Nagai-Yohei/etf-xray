@@ -1,10 +1,10 @@
-"""SEC EDGAR XBRL companyfacts からの財務・配当抽出および株式分割補正。
+"""SEC EDGAR XBRL companyfacts financial/dividend extraction and split adjustment.
 
-主な機能:
-- 業種別（一般事業会社・銀行・保険・エネルギー等）の US-GAAP / IFRS タグ優先順位マッピング
-- 10-K 比較年度の重複報告から株式分割係数を連鎖推定（Yahoo Finance 不使用・100% SEC）
-- 採用ファクトの提出日（filed）基準で 1 株指標（EPS / DPS）および株数を最新株数基準へ統一
-- 年次データ（financials_annual）および直近 12 ヶ月（financials_ttm）の抽出
+Key features:
+- Industry-aware US-GAAP / IFRS tag priority mapping (corporates, banks, insurers, energy, etc.)
+- Chained split-factor inference from overlapping 10-K comparative years (100% SEC; no Yahoo Finance)
+- Per-share (EPS / DPS) and share-count normalization to latest share basis by filing date
+- Annual (financials_annual), standalone quarterly (financials_quarterly), and TTM extraction
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from src.edgar import EdgarClient, normalize_cik
 ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
 QUARTERLY_FORMS = {"10-Q", "10-Q/A"}
 
-# よく見られる株式分割比率（近傍 ±2.5% なら正確な理論比にスナップ）
+# Common stock split ratios (snap to exact ratio if within +/-2.5%)
 KNOWN_SPLIT_RATIOS = (
     20.0,
     15.0,
@@ -48,7 +48,7 @@ KNOWN_SPLIT_RATIOS = (
 )
 
 # =============================================================================
-# タグ優先順位定義（(taxonomy, tag) の優先順リスト）
+# Tag priority definitions (ordered lists of (taxonomy, tag))
 # =============================================================================
 TAG_MAP_FLOW_USD: dict[str, list[tuple[str, str]]] = {
     "revenue": [
@@ -167,7 +167,7 @@ TAG_MAP_FLOW_USD: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
-# 銀行向け収益フォールバック（純金利収入 + 非金利収入）
+# Bank revenue fallback (net interest income + noninterest income)
 BANK_NII_TAGS = [("us-gaap", "InterestIncomeExpenseNet")]
 BANK_NONINT_TAGS = [("us-gaap", "NoninterestIncome")]
 
@@ -230,7 +230,7 @@ TAG_MAP_INSTANT_USD: dict[str, list[tuple[str, str]]] = {
         ("us-gaap", "Cash"),
         ("ifrs-full", "CashAndCashEquivalents"),
     ],
-    # 負債は単一合算タグを優先し、なければ長期＋短期で合成する
+    # Prefer combined total-debt tags; otherwise sum long-term and short-term debt
     "debt_combined": [
         ("us-gaap", "DebtAndCapitalLeaseObligations"),
         ("us-gaap", "DebtLongtermAndShorttermCombinedAmount"),
@@ -263,7 +263,7 @@ TAG_MAP_INSTANT_SHARES: dict[str, list[tuple[str, str]]] = {
 
 @dataclass(frozen=True)
 class FactRecord:
-    """XBRL の 1 レコードを表す軽量構造体。"""
+    """Lightweight container for a single XBRL fact record."""
 
     val: float
     end: str
@@ -298,7 +298,7 @@ def _iter_tag_records(
     unit_candidates: tuple[str, ...],
     allowed_forms: set[str],
 ) -> list[FactRecord]:
-    """指定タグ群から対象フォームのレコードを抽出する。"""
+    """Extract matching XBRL fact records for the given tag list and form types."""
     facts_root = company_facts.get("facts") or {}
     out: list[FactRecord] = []
 
@@ -352,7 +352,7 @@ def _is_annual_flow(rec: FactRecord) -> bool:
 
 
 def _rec_recency_key(rec: FactRecord) -> tuple[str, int, str]:
-    """同一期間・同一タグ内での最新提出の優先キー（大きいほど新しい）。"""
+    """Priority key for selecting the latest filing within the same period and tag (larger = newer)."""
     is_amendment = 1 if rec.form.endswith("/A") else 0
     return (rec.filed, is_amendment, rec.accn)
 
@@ -361,8 +361,8 @@ def _select_best_annual_flow(
     records: list[FactRecord],
     avoid_integer_rounding: bool = False,
 ) -> dict[str, FactRecord]:
-    """fy_end ごとに「最優先タグかつ最新提出」の年次フローレコードを 1 件選ぶ。"""
-    # まず (fy_end, priority) ごとに提出昇順で並べる
+    """Select the highest-priority, latest-filed annual flow record for each fy_end."""
+    # Sort records chronologically by filing date within each (fy_end, priority)
     grouped: dict[tuple[str, int], list[FactRecord]] = defaultdict(list)
     for rec in records:
         if not _is_annual_flow(rec):
@@ -373,7 +373,7 @@ def _select_best_annual_flow(
     for key, grp in grouped.items():
         grp.sort(key=_rec_recency_key)
         chosen = grp[-1]
-        # 1 株指標で比較年度の XBRL decimals=0 丸め（例: 2.70 → 3）による精度劣化を回避
+        # Avoid precision loss on per-share facts rounded with decimals=0 in later comparative filings (e.g. 2.70 -> 3)
         if avoid_integer_rounding and len(grp) >= 2 and chosen.val == round(chosen.val):
             for prev in reversed(grp[:-1]):
                 if prev.val != round(prev.val) and round(prev.val) == chosen.val:
@@ -381,7 +381,7 @@ def _select_best_annual_flow(
                     break
         by_end_prio[key] = chosen
 
-    # fy_end ごとに最小 priority（最優先タグ）を採用
+    # Pick the lowest priority index (highest priority tag) per fy_end
     selected: dict[str, FactRecord] = {}
     for (fy_end, _prio), rec in sorted(by_end_prio.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         if fy_end not in selected:
@@ -395,11 +395,11 @@ def _select_best_instant_for_dates(
     max_day_diff_before: int = 15,
     max_day_diff_after: int = 15,
 ) -> dict[str, FactRecord]:
-    """対象 fy_end 群それぞれに最も近く優先度が高い instant レコードを紐づける。"""
+    """Match each target fy_end to the closest, highest-priority instant record."""
     instant_recs = [r for r in records if r.start is None]
     target_dates = [(end, _parse_date(end)) for end in target_ends]
 
-    # (fy_end, priority) ごとに最も日付差が小さく新しい提出を選ぶ
+    # Pick the closest date and latest filing for each (fy_end, priority)
     best: dict[str, tuple[int, int, tuple[str, int, str], FactRecord]] = {}
 
     for rec in instant_recs:
@@ -413,7 +413,7 @@ def _select_best_instant_for_dates(
             if delta < -max_day_diff_before or delta > max_day_diff_after:
                 continue
             abs_delta = abs(delta)
-            # 1) タグ優先度（小さいほど良い） 2) 期末日とのズレ（小さいほど良い） 3) 最新提出
+            # 1) Tag priority (lower is better) 2) Date distance (lower is better) 3) Latest filing
             cand_score = (rec.priority, abs_delta)
             prev = best.get(fy_end)
             if prev is None:
@@ -429,7 +429,7 @@ def _select_best_instant_for_dates(
 
 
 def _snap_split_ratio(ratio: float) -> float:
-    """既知の株式分割比率に十分近い場合は正確な理論値に丸める。"""
+    """Snap an empirical split ratio to the exact theoretical ratio when sufficiently close."""
     for known in KNOWN_SPLIT_RATIOS:
         if abs(ratio / known - 1.0) <= 0.025:
             return known
@@ -442,15 +442,15 @@ def _estimate_split_events(
     dps_decl_recs: list[FactRecord],
     dps_paid_recs: list[FactRecord],
 ) -> list[tuple[str, float]]:
-    """10-K 重複年度の比較から株式分割イベント [(発効提出日, 分割倍率), ...] を推定する。
+    """Infer stock split events [(effective_filed, factor), ...] from overlapping 10-K comparative years.
 
-    返り値の各タプル (effective_filed, factor) は:
-    「filed < effective_filed の提出書類に含まれる 1 株指標は factor で割り、
-      株数は factor を掛けると、effective_filed 以降の基準に揃う」ことを意味する。
+    Each tuple (effective_filed, factor) means:
+    per-share figures filed before effective_filed are divided by factor, and share counts
+    are multiplied by factor, to align onto the post-effective_filed share basis.
     """
 
     def index_by_end_and_filed(recs: list[FactRecord]) -> dict[str, dict[str, FactRecord]]:
-        # 各 (fy_end, filed) で最も優先度が高いタグを 1 件残す
+        # Keep the single highest-priority tag record for each (fy_end, filed)
         table: dict[str, dict[str, FactRecord]] = defaultdict(dict)
         for rec in recs:
             if not _is_annual_flow(rec):
@@ -465,7 +465,7 @@ def _estimate_split_events(
     dps_d_idx = index_by_end_and_filed(dps_decl_recs)
     dps_p_idx = index_by_end_and_filed(dps_paid_recs)
 
-    # 全 10-K 提出日を昇順収集
+    # Collect all 10-K filing dates in ascending order
     all_filings = sorted(
         {
             filed
@@ -478,7 +478,7 @@ def _estimate_split_events(
 
     events: list[tuple[str, float]] = []
 
-    # 隣接する提出日 (prev_filed -> next_filed) の間で重複する fy_end を比較する
+    # Compare overlapping fy_ends between consecutive filing dates (prev_filed -> next_filed)
     for idx in range(len(all_filings) - 1):
         prev_f = all_filings[idx]
         next_f = all_filings[idx + 1]
@@ -495,7 +495,7 @@ def _estimate_split_events(
             if 0.92 <= r_shares <= 1.08:
                 continue
 
-            # EPS または DPS の逆比率で裏付け確認（会計基準変更や希薄化変動による誤検出を防ぐ）
+            # Corroborate with inverse EPS/DPS ratio to avoid false positives from accounting or dilution shifts
             corroborated = False
 
             e_old_rec = eps_idx.get(fy_end, {}).get(prev_f)
@@ -530,7 +530,7 @@ def _estimate_split_events(
 
 
 def _cumulative_split_factor(filed: str | None, split_events: list[tuple[str, float]]) -> float:
-    """指定提出日 filed から最新提出までの累積分割倍率を返す。"""
+    """Return the cumulative split factor from the given filing date to the latest filing."""
     if not filed or not split_events:
         return 1.0
     factor = 1.0
@@ -544,7 +544,7 @@ def _extract_total_debt(
     company_facts: dict[str, Any],
     target_ends: list[str],
 ) -> dict[str, float]:
-    """総有利子負債（短期＋長期）を重複加算しないルールで抽出する。"""
+    """Extract total interest-bearing debt (short-term + long-term) without double-counting."""
     combined = _select_best_instant_for_dates(
         _iter_tag_records(company_facts, TAG_MAP_INSTANT_USD["debt_combined"], ("USD",), ANNUAL_FORMS),
         target_ends,
@@ -579,10 +579,10 @@ def _extract_total_debt(
         if lt is not None:
             total += lt.val
         if cur is not None:
-            # LongTermDebt は短期分を含む場合もあるが、Noncurrent/Current の組が一般的
+            # LongTermDebt may include current maturities; Noncurrent + Current is standard
             if lt is None or lt.tag != "us-gaap:LongTermDebt" or cur.tag != "us-gaap:LongTermDebtCurrent":
                 total += cur.val
-        # LongTermDebtCurrent を採った場合、別枠の ShortTermBorrowings / CommercialPaper があれば加算
+        # When using LongTermDebtCurrent, also add separate ShortTermBorrowings / CommercialPaper if reported
         if (
             cur is not None
             and cur.tag in ("us-gaap:LongTermDebtCurrent", "us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent")
@@ -599,7 +599,7 @@ def extract_annual_financials(
     company_facts: dict[str, Any],
     min_year: int = 2009,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, float]]]:
-    """companyfacts JSON から年次財務（分割補正済み）と検出された分割イベント一覧を返す。"""
+    """Extract split-adjusted annual financials and detected split events from companyfacts JSON."""
     flow_usd_raw = {
         metric: _iter_tag_records(company_facts, tags, ("USD",), ANNUAL_FORMS)
         for metric, tags in TAG_MAP_FLOW_USD.items()
@@ -613,7 +613,7 @@ def extract_annual_financials(
         for metric, tags in TAG_MAP_FLOW_SHARES.items()
     }
 
-    # 1. 株式分割イベントを推定
+    # 1. Infer stock split events
     split_events = _estimate_split_events(
         shares_recs=flow_sh_raw["shares_diluted"],
         eps_recs=flow_ps_raw["eps_diluted"],
@@ -621,7 +621,7 @@ def extract_annual_financials(
         dps_paid_recs=flow_ps_raw["dps_paid"],
     )
 
-    # 2. 各フロー項目の fy_end ごとの最良レコードを選択
+    # 2. Pick the best annual record per fy_end for each flow metric
     flow_usd = {m: _select_best_annual_flow(recs) for m, recs in flow_usd_raw.items()}
     flow_ps = {
         m: _select_best_annual_flow(recs, avoid_integer_rounding=True)
@@ -629,7 +629,7 @@ def extract_annual_financials(
     }
     flow_sh = {m: _select_best_annual_flow(recs) for m, recs in flow_sh_raw.items()}
 
-    # 銀行向け収益フォールバック（Revenues 系が欠損する年度に純金利収入 + 非金利収入を合成）
+    # Bank revenue fallback (synthesize net interest income + noninterest income when Revenues tags are absent)
     bank_nii = _select_best_annual_flow(
         _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), ANNUAL_FORMS)
     )
@@ -651,7 +651,7 @@ def extract_annual_financials(
                 priority=99,
             )
 
-    # 主要 PL 項目（revenue / net_income / operating_cf）から有効な fy_end 集合を構築
+    # Build the valid fy_end set from core PL/CF metrics (revenue / net_income / operating_cf)
     core_ends = sorted(
         {
             end
@@ -664,8 +664,8 @@ def extract_annual_financials(
         }
     )
 
-    # 同一会計年度内で決算日が数日ブレる重複（例: 52/53週決算で修正申告や比較欄の誤記）を排除しつつ、
-    # 通常は年 1 回の期末日（間隔 >= 200 日）を保持する
+    # Deduplicate fy_end dates separated by a few days (e.g. 52/53-week calendar amendments or comparative typos)
+    # while keeping normal annual period ends (>= 200 days apart)
     filtered_ends: list[str] = []
     for end in core_ends:
         d_cur = _parse_date(end)
@@ -674,7 +674,7 @@ def extract_annual_financials(
         if filtered_ends:
             d_prev = _parse_date(filtered_ends[-1])
             if d_prev is not None and (d_cur - d_prev).days < 200:
-                # 情報量が多い方を残す
+                # Keep the record with more populated fields
                 prev_end = filtered_ends[-1]
                 prev_score = sum(
                     1
@@ -691,7 +691,7 @@ def extract_annual_financials(
                 continue
         filtered_ends.append(end)
 
-    # 3. BS・期末株式数（instant 項目）を対象 fy_end に紐づけ
+    # 3. Align balance sheet and period-end share counts (instant facts) to target fy_ends
     instant_usd = {
         metric: _select_best_instant_for_dates(
             _iter_tag_records(company_facts, TAG_MAP_INSTANT_USD[metric], ("USD",), ANNUAL_FORMS),
@@ -709,7 +709,7 @@ def extract_annual_financials(
     }
     total_debt_map = _extract_total_debt(company_facts, filtered_ends)
 
-    # 期末株式数: CommonStockSharesOutstanding（±15日）優先、なければ EntityCommonStockSharesOutstanding（+75日まで）
+    # Period-end shares: prefer CommonStockSharesOutstanding (+/-15d), else EntityCommonStockSharesOutstanding (up to +75d)
     shares_out_bs = _select_best_instant_for_dates(
         _iter_tag_records(
             company_facts,
@@ -733,7 +733,7 @@ def extract_annual_financials(
         max_day_diff_after=75,
     )
 
-    # 4. 年次行の組み立てと株式分割補正の適用
+    # 4. Assemble annual rows and apply split adjustments
     rows: list[dict[str, Any]] = []
     for fy_end in filtered_ends:
         rev_rec = flow_usd["revenue"].get(fy_end)
@@ -763,12 +763,12 @@ def extract_annual_financials(
         sh_dil_rec = flow_sh["shares_diluted"].get(fy_end)
         sh_out_rec = shares_out_bs.get(fy_end) or shares_out_dei.get(fy_end)
 
-        # 代表提出日・期首日
+        # Representative filing date and fiscal-year start date
         anchor_rec = ni_rec or rev_rec or ocf_rec or eps_rec
         fy_start = anchor_rec.start if anchor_rec else None
         filed = anchor_rec.filed if anchor_rec else None
 
-        # 各 1 株指標・株数には、そのレコード自身の提出日 filed に応じた分割係数を適用する
+        # Adjust each per-share metric and share count using the split factor for its own filing date
         eps_factor = _cumulative_split_factor(eps_rec.filed if eps_rec else filed, split_events)
         dps_d_factor = _cumulative_split_factor(dps_d_rec.filed if dps_d_rec else filed, split_events)
         dps_p_factor = _cumulative_split_factor(dps_p_rec.filed if dps_p_rec else filed, split_events)
@@ -781,14 +781,14 @@ def extract_annual_financials(
         sh_dil_adj = (sh_dil_rec.val * sh_dil_factor) if sh_dil_rec is not None else None
         sh_out_adj = (sh_out_rec.val * sh_out_factor) if sh_out_rec is not None else None
 
-        # CapEx・配当支払・自社株買い・各種費用は正の値に正規化
+        # Normalize CapEx, dividends paid, buybacks, and expense line items to positive magnitudes
         rev_val = rev_rec.val if rev_rec is not None else None
         if gp_rec is not None:
             gp_val: float | None = gp_rec.val
         elif rev_val is not None and cor_rec is not None:
             gp_val = rev_val - abs(cor_rec.val)
         elif rev_val is not None and (cog_rec is not None or cos_rec is not None):
-            # 製品原価とサービス原価が別タグの場合は必ず合算して差し引く（例: VZ, LMT, SLB）
+            # Sum separate goods and services cost tags before subtracting from revenue (e.g. VZ, LMT, SLB)
             total_cost = (abs(cog_rec.val) if cog_rec is not None else 0.0) + (
                 abs(cos_rec.val) if cos_rec is not None else 0.0
             )
@@ -802,7 +802,7 @@ def extract_annual_financials(
         div_paid_val = abs(div_rec.val) if div_rec is not None else None
         buyback_val = abs(buyback_rec.val) if buyback_rec is not None else None
 
-        # 代表分割係数（PL 基準）
+        # Representative split factor (based on PL filing date)
         rep_split_factor = _cumulative_split_factor(filed, split_events)
 
         rows.append(
@@ -868,13 +868,13 @@ def _find_latest_ytd_pair(
     latest_fy_end: str,
     target_q_end: str | None = None,
 ) -> tuple[str | None, float | None, float | None]:
-    """最新 10-K 以降の 10-Q YTD と前年同期 YTD のペア (q_end, cur_ytd, prev_ytd) を返す。"""
+    """Return (q_end, cur_ytd, prev_ytd) for 10-Q YTD after the latest 10-K and its prior-year counterpart."""
     d_fy_end = _parse_date(latest_fy_end)
     d_fy_start = _parse_date(latest_fy_start)
     if d_fy_end is None:
         return None, None, None
 
-    # 当期 YTD 候補: start が latest_fy_end 付近（-7〜+10日）、end > latest_fy_end、期間 70〜305日
+    # Current YTD candidates: start near latest_fy_end (-7 to +10d), end > latest_fy_end, duration 70-305d
     cur_candidates: list[FactRecord] = []
     for rec in records:
         d_s = _parse_date(rec.start)
@@ -893,11 +893,11 @@ def _find_latest_ytd_pair(
     if not cur_candidates:
         return None, None, None
 
-    # 最新 end かつ最優先タグ・最新提出を選ぶ
+    # Pick the latest end date, highest-priority tag, and latest filing
     latest_q_end = max(r.end for r in cur_candidates)
     q_recs = [r for r in cur_candidates if r.end == latest_q_end]
     q_recs.sort(key=lambda r: (r.priority, tuple(-ord(c) for c in r.filed)))
-    # 最優先タグ内で最新提出
+    # Latest filing within the highest-priority tag
     best_prio = min(r.priority for r in q_recs)
     cur_rec = max(
         (r for r in q_recs if r.priority == best_prio),
@@ -907,7 +907,7 @@ def _find_latest_ytd_pair(
     if cur_dur is None:
         return None, None, None
 
-    # 前年同期 YTD: 同じタグ（優先）かつ start が latest_fy_start 付近（±10日）で期間長が cur_dur ±15日
+    # Prior-year YTD: same tag (preferred), start near latest_fy_start (+/-10d), duration within cur_dur +/-15d
     prev_candidates: list[FactRecord] = []
     for rec in records:
         d_s = _parse_date(rec.start)
@@ -921,7 +921,7 @@ def _find_latest_ytd_pair(
             if abs((d_s - d_fy_start).days) > 12:
                 continue
         else:
-            # fy_start 不明時は end が latest_q_end の約 1 年前（350〜380日前）
+            # If fy_start is unknown, match end date ~1 year prior to latest_q_end (350-380d earlier)
             d_q_end = _parse_date(latest_q_end)
             if d_q_end is None or not (345 <= (d_q_end - d_e).days <= 385):
                 continue
@@ -930,7 +930,7 @@ def _find_latest_ytd_pair(
     if not prev_candidates:
         return latest_q_end, None, None
 
-    # 当期レコードと同じ提出（accn）＆同じタグを最優先、なければ同タグの最新提出
+    # Prefer same accession and tag as current YTD; fall back to latest filing with the same tag
     same_accn = [r for r in prev_candidates if r.accn == cur_rec.accn and r.tag == cur_rec.tag]
     if same_accn:
         prev_rec = same_accn[0]
@@ -947,7 +947,7 @@ def extract_ttm_financials(
     company_facts: dict[str, Any],
     annual_rows: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """最新 10-K と直近 10-Q から TTM（直近 12 ヶ月）指標を算出する。"""
+    """Compute TTM (trailing twelve months) metrics from the latest 10-K and subsequent 10-Q."""
     if not annual_rows:
         return None
 
@@ -955,7 +955,7 @@ def extract_ttm_financials(
     latest_fy_end = latest_ann["fy_end"]
     latest_fy_start = latest_ann.get("fy_start")
 
-    # まず最新 10-Q の基準日（period_end）を主要フロー（revenue / net_income / operating_cf）から特定
+    # Identify the latest 10-Q period_end from core flow metrics (revenue / net_income / operating_cf)
     q_rev_recs = _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), QUARTERLY_FORMS)
     q_ni_recs = _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["net_income"], ("USD",), QUARTERLY_FORMS)
     q_ocf_recs = _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["operating_cf"], ("USD",), QUARTERLY_FORMS)
@@ -999,7 +999,7 @@ def extract_ttm_financials(
         return round(ann_val + cur_v - prev_v, 4)
 
     revenue_ttm = calc_ttm_usd("revenue")
-    # 銀行向け収益フォールバック（10-Q でも Revenues 系がない場合）
+    # Bank revenue fallback when 10-Q omits standard Revenues tags
     if target_q_end is not None and revenue_ttm == latest_ann.get("revenue") and latest_ann.get("revenue") is not None:
         q_nii = _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), QUARTERLY_FORMS)
         q_nonint = _iter_tag_records(company_facts, BANK_NONINT_TAGS, ("USD",), QUARTERLY_FORMS)
@@ -1014,12 +1014,12 @@ def extract_ttm_financials(
     fcf_ttm = (ocf_ttm - capex_ttm) if (ocf_ttm is not None and capex_ttm is not None) else latest_ann.get("fcf")
     eps_ttm = calc_ttm_ps("eps_diluted")
 
-    # DPS TTM: 宣言ベース優先、なければ支払ベース
+    # TTM DPS: prefer declared basis; fall back to paid basis
     dps_ttm = calc_ttm_ps("dps_declared")
     if dps_ttm is None:
         dps_ttm = calc_ttm_ps("dps_paid")
 
-    # BS（自己資本・期末株数）は period_end 時点の最新 instant を取得
+    # Balance sheet (equity and period-end shares): fetch latest instant at period_end
     all_forms = ANNUAL_FORMS | QUARTERLY_FORMS
     eq_map = _select_best_instant_for_dates(
         _iter_tag_records(company_facts, TAG_MAP_INSTANT_USD["total_equity"], ("USD",), all_forms),
@@ -1045,7 +1045,7 @@ def extract_ttm_financials(
     total_equity = eq_map[period_end].val if period_end in eq_map else latest_ann.get("total_equity")
     sh_rec = sh_bs_map.get(period_end) or sh_dei_map.get(period_end)
     shares_out = sh_rec.val if sh_rec is not None else latest_ann.get("shares_outstanding")
-    # 2クラス株式（例: UPS）等で期末株数 instant がない場合は直近の希薄化後株数にフォールバック
+    # Fall back to latest diluted shares when period-end instant is absent (e.g. dual-class issuers like UPS)
     if shares_out is None:
         q_sh_recs = _iter_tag_records(
             company_facts, TAG_MAP_FLOW_SHARES["shares_diluted"], ("shares",), all_forms
@@ -1074,7 +1074,7 @@ def extract_ttm_financials(
 
 
 def _select_best_single_quarter(records: list[FactRecord]) -> dict[str, FactRecord]:
-    """期間日数 70〜110 日の 3 ヶ月単独四半期レコードを period_end ごとに 1 件選ぶ。"""
+    """Select one standalone 3-month quarterly record (70-110 days) per period_end."""
     by_end_prio: dict[tuple[str, int], FactRecord] = {}
     for rec in records:
         dur = _duration_days(rec.start, rec.end)
@@ -1093,7 +1093,7 @@ def _select_best_single_quarter(records: list[FactRecord]) -> dict[str, FactReco
 
 
 def _select_best_ytd_by_end(records: list[FactRecord]) -> dict[str, FactRecord]:
-    """10-Q の YTD（70〜305日）を (start, end) ベースで period_end ごとに最長期間のものを 1 件選ぶ。"""
+    """Select the longest 10-Q YTD record (70-305 days) per period_end."""
     by_end: dict[str, FactRecord] = {}
     for rec in records:
         dur = _duration_days(rec.start, rec.end)
@@ -1104,7 +1104,7 @@ def _select_best_ytd_by_end(records: list[FactRecord]) -> dict[str, FactRecord]:
             by_end[rec.end] = rec
             continue
         prev_dur = _duration_days(prev.start, prev.end) or 0
-        # 同じ end なら、より長い YTD（例: 6M/9M > 3M）を優先し、次に優先タグ・最新提出
+        # For the same end date, prefer longer YTD (6M/9M > 3M), then higher-priority tag and latest filing
         if (dur > prev_dur + 20) or (
             abs(dur - prev_dur) <= 20
             and (rec.priority < prev.priority or (rec.priority == prev.priority and _rec_recency_key(rec) > _rec_recency_key(prev)))
@@ -1119,13 +1119,13 @@ def extract_quarterly_financials(
     split_events: list[tuple[str, float]],
     max_quarters: int = 16,
 ) -> list[dict[str, Any]]:
-    """直近 max_quarters 四半期の単独（3ヶ月）PL・CF データを抽出する（Q4 は 10-K − Q3 YTD で補完）。"""
+    """Extract up to max_quarters standalone (3-month) PL/CF quarters (deriving Q4 from 10-K minus Q3 YTD)."""
     all_forms = ANNUAL_FORMS | QUARTERLY_FORMS
 
     q_rev = _select_best_single_quarter(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), all_forms)
     )
-    # 銀行向け収益フォールバック（単独四半期）
+    # Bank revenue fallback (standalone quarters)
     q_nii = _select_best_single_quarter(
         _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), all_forms)
     )
@@ -1159,7 +1159,7 @@ def extract_quarterly_financials(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_PER_SHARE["eps_diluted"], ("USD/shares",), all_forms)
     )
 
-    # YTD 系列（Q4 の逆算、および OCF/CapEx の四半期差分計算用）
+    # YTD series (used to back-calculate Q4 and compute quarterly OCF/CapEx differences)
     ytd_rev = _select_best_ytd_by_end(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), QUARTERLY_FORMS)
     )
@@ -1182,7 +1182,7 @@ def extract_quarterly_financials(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["capex"], ("USD",), QUARTERLY_FORMS)
     )
 
-    # 単独四半期マップを構築
+    # Build standalone quarter map
     quarters: dict[str, dict[str, Any]] = {}
     all_q_ends = sorted(set(q_rev) | set(q_ni))
     for end in all_q_ends:
@@ -1206,7 +1206,7 @@ def extract_quarterly_financials(
             "fcf": None,
         }
 
-    # 年次行をもとに Q4 を補完し、同一会計年度内の YTD 差分から OCF/FCF を算出
+    # Derive Q4 from annual rows and compute standalone OCF/FCF from intra-year YTD differences
     recent_annual = annual_rows[-6:] if len(annual_rows) > 6 else annual_rows
     for ann in recent_annual:
         fy_end = ann["fy_end"]
@@ -1216,7 +1216,7 @@ def extract_quarterly_financials(
         if d_fy_start is None or d_fy_end is None:
             continue
 
-        # 同一会計年度の Q3 YTD（240〜300日）を探す
+        # Find Q3 YTD (240-300 days) within the same fiscal year
         def find_q3_ytd(ytd_map: dict[str, FactRecord]) -> FactRecord | None:
             for rec in ytd_map.values():
                 d_s = _parse_date(rec.start)
@@ -1253,7 +1253,7 @@ def extract_quarterly_financials(
         elif fy_end in quarters:
             quarters[fy_end]["fp"] = "Q4"
 
-    # YTD OCF / CapEx からの単独四半期 OCF / FCF 算出（同一 start の YTD を昇順差分）
+    # Compute standalone quarterly OCF/FCF by differencing ascending YTD entries sharing the same start date
     def assign_quarterly_cf(ytd_map: dict[str, FactRecord], ann_field: str, abs_outflow: bool = False) -> dict[str, float]:
         out: dict[str, float] = {}
         by_start: dict[str, list[tuple[str, float]]] = defaultdict(list)
@@ -1263,13 +1263,13 @@ def extract_quarterly_financials(
             val = abs(rec.val) if abs_outflow else rec.val
             by_start[rec.start[:7]].append((rec.end, val))
 
-        # 年次行も該当 start グループに追加
+        # Include annual rows in the matching start-date group
         for ann in recent_annual:
             if ann.get("fy_start") and ann.get(ann_field) is not None:
                 by_start[ann["fy_start"][:7]].append((ann["fy_end"], float(ann[ann_field])))
 
         for _start_ym, pts in by_start.items():
-            # end 昇順で重複除去
+            # Deduplicate in ascending end-date order
             dedup = sorted({e: v for e, v in pts}.items())
             prev_val = 0.0
             prev_end: date | None = None
@@ -1278,7 +1278,7 @@ def extract_quarterly_financials(
                 if d_e is None:
                     continue
                 if prev_end is None:
-                    # Q1（約 3 ヶ月）のチェック
+                    # Check for Q1 (~3 months)
                     out[end_str] = cum_val
                 else:
                     gap = (d_e - prev_end).days
@@ -1297,7 +1297,7 @@ def extract_quarterly_financials(
             if end in q_capex_map:
                 q["fcf"] = q_ocf_map[end] - q_capex_map[end]
 
-    # 間隔 50 日未満の微細重複を排除し、直近 max_quarters 件を返す
+    # Deduplicate entries separated by < 50 days and return the latest max_quarters quarters
     deduped: list[dict[str, Any]] = []
     for end in sorted(quarters):
         d_cur = _parse_date(end)
@@ -1327,11 +1327,11 @@ def _fmt_num(val: float | None) -> str:
 
 
 def verify_sample_tickers(tickers: list[str]) -> int:
-    """指定ティッカー群の SEC XBRL 抽出結果を一覧表示して検証する。"""
+    """Print a verification table of SEC XBRL extraction results for the given tickers."""
     client = EdgarClient()
     ticker_to_cik = client.build_ticker_to_cik_map()
 
-    print(f"検証対象銘柄数: {len(tickers)}")
+    print(f"Tickers verified: {len(tickers)}")
     print("=" * 116)
     print(
         f"{'Ticker':<6} {'CIK':<10} {'Yrs':>3} {'LatestFY':<10} "
@@ -1389,9 +1389,9 @@ def verify_sample_tickers(tickers: list[str]) -> int:
         )
 
     print("=" * 116)
-    print("最新年度で欠損した項目サマリー:")
+    print("Summary of missing fields in latest fiscal year:")
     for field, tlist in sorted(missing_summary.items()):
-        print(f"  - {field:<18}: {len(tlist):>2}銘柄 ({', '.join(tlist)})")
+        print(f"  - {field:<18}: {len(tlist):>2} ticker(s) ({', '.join(tlist)})")
 
     return 0
 

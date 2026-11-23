@@ -1,6 +1,6 @@
-"""SQLite（data/market.db）から静的サイト配信用の分割 JSON（dist/data/）を生成する。
+"""Generate split static JSON files (dist/data/) from SQLite (data/market.db).
 
-出力ファイル（DESIGN.md 第5章）:
+Output files:
 - dist/data/meta.json
 - dist/data/etf/<ETF_ID>/summary.json
 - dist/data/etf/<ETF_ID>/holdings/<AS_OF>.json
@@ -38,7 +38,7 @@ def _safe_filename(ident: str) -> str:
 
 
 def _copy_web_assets(dist_dir: Path) -> None:
-    """web/ 配下の静的アセットが存在すれば dist/ へコピーする。"""
+    """Copy static frontend assets from web/ into dist/."""
     if not WEB_DIR.is_dir():
         return
     for item in WEB_DIR.iterdir():
@@ -52,8 +52,11 @@ def _copy_web_assets(dist_dir: Path) -> None:
 
 
 def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str, int]:
-    """SQLite DB から dist/ 一式（静的アセット + 分割 JSON）をビルドする。"""
-    data_dir = dist_dir / "data"
+    """Build the complete dist/ bundle (static assets + split JSON) from SQLite."""
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    final_data_dir = dist_dir / "data"
+    # Stage JSON output into a temp directory and swap atomically so live preview never sees 404s
+    data_dir = dist_dir / ".data_staging"
     if data_dir.exists():
         shutil.rmtree(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -71,7 +74,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
         holdings_file_count = 0
 
         # ------------------------------------------------------------
-        # 1. ETF ごとの summary.json および holdings/<AS_OF>.json
+        # 1. Per-ETF summary.json and holdings/<AS_OF>.json
         # ------------------------------------------------------------
         for etf in etfs:
             etf_id = _safe_filename(etf["etf_id"])
@@ -92,7 +95,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
             date_index = {d: i for i, d in enumerate(date_list)}
             latest_as_of = date_list[-1]
 
-            # 入替データ集計
+            # Aggregate constituent additions and removals
             changes_by_date: dict[str, dict[str, list[dict[str, Any]]]] = {
                 d: {"added": [], "removed": []} for d in date_list
             }
@@ -115,8 +118,9 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     }
                 )
 
-            # 基準日別の保有銘柄出力 ＋ 保有期間マップ（tenure_map）集計
+            # Export per-date holdings and accumulate tenure_map
             tenure_acc: dict[str, dict[str, Any]] = {}
+            latest_top_holdings: list[dict[str, Any]] = []
             for d_row in dates:
                 as_of = d_row["as_of"]
                 d_idx = date_index[as_of]
@@ -183,6 +187,17 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     if as_of == latest_as_of:
                         etf_membership.setdefault(sec_id, set()).add(etf_id)
 
+                if as_of == latest_as_of:
+                    latest_top_holdings = [
+                        {
+                            "security_id": item["security_id"],
+                            "ticker": item["ticker"],
+                            "name": item["name"],
+                            "weight": item["weight"],
+                        }
+                        for item in out_holdings[:5]
+                    ]
+
                 _write_json(
                     data_dir / "etf" / etf_id / "holdings" / f"{as_of}.json",
                     {
@@ -197,10 +212,10 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                 )
                 holdings_file_count += 1
 
-            # 基準日ごとの推定年間配当総額・ポートフォリオ利回りを算出
+            # Compute estimated annual dividends and portfolio yield per reporting date
             div_history = compute_etf_dividend_history(conn, etf_id)
 
-            # summary.json 組み立て
+            # Build summary.json
             summary_dates = [
                 {
                     "as_of": d["as_of"],
@@ -266,6 +281,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
             )
 
             latest_row = dates[-1]
+            latest_div = div_history.get(latest_as_of) or {}
             meta_etfs.append(
                 {
                     "etf_id": etf_id,
@@ -276,11 +292,14 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     "date_count": len(date_list),
                     "latest_holdings_count": int(latest_row["holdings_count"]),
                     "latest_total_value_usd": round(float(latest_row["total_value_usd"]), 2),
+                    "latest_est_yield": latest_div.get("est_yield"),
+                    "latest_est_annual_dividends_usd": latest_div.get("est_annual_dividends_usd"),
+                    "top_holdings": latest_top_holdings,
                 }
             )
 
         # ------------------------------------------------------------
-        # 2. 個別株 index.json および stocks/<SECURITY_ID>.json
+        # 2. Individual stock index.json and stocks/<SECURITY_ID>.json
         # ------------------------------------------------------------
         sec_rows = conn.execute("SELECT * FROM securities ORDER BY security_id").fetchall()
         metrics_map = {
@@ -435,6 +454,16 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
             },
         )
 
+        # Atomically swap staged JSON directory into dist/data
+        old_data_dir = dist_dir / ".data_old"
+        if old_data_dir.exists():
+            shutil.rmtree(old_data_dir)
+        if final_data_dir.exists():
+            final_data_dir.rename(old_data_dir)
+        data_dir.rename(final_data_dir)
+        if old_data_dir.exists():
+            shutil.rmtree(old_data_dir)
+
         return {
             "etfs": len(meta_etfs),
             "holdings_files": holdings_file_count,
@@ -442,6 +471,8 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
         }
     finally:
         conn.close()
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
 
 
 def main() -> int:
