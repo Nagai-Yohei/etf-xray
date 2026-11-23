@@ -807,7 +807,12 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
     const headerH = 28;
     const totalW = labelWidth + countWidth + dateList.length * cellW + 36;
     const bodyH = items.length * rowH + 10;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Clamp backing-store DPR so tall all-historical canvases (e.g. VYM 1,276 rows) stay within browser limits
+    const baseDpr = Math.min(window.devicePixelRatio || 1, 2);
+    const maxDimDpr = Math.min(16000 / Math.max(1, totalW), 16000 / Math.max(1, bodyH));
+    const maxAreaDpr = Math.sqrt(15_000_000 / Math.max(1, totalW * bodyH));
+    const dpr = Math.max(0.5, Math.min(baseDpr, maxDimDpr, maxAreaDpr));
+    const headerDpr = baseDpr;
 
     // Precompute year start column indices for ticks and faint vertical guides
     const yearStarts = [];
@@ -826,13 +831,13 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
       className: "tenure-header-canvas",
       ariaLabel: "Holding tenure map year header",
     });
-    headerCanvas.width = totalW * dpr;
-    headerCanvas.height = headerH * dpr;
+    headerCanvas.width = Math.round(totalW * headerDpr);
+    headerCanvas.height = Math.round(headerH * headerDpr);
     headerCanvas.style.width = `${totalW}px`;
     headerCanvas.style.height = `${headerH}px`;
 
     const hctx = headerCanvas.getContext("2d");
-    hctx.scale(dpr, dpr);
+    hctx.scale(headerDpr, headerDpr);
     hctx.fillStyle = "#f8fafc";
     hctx.fillRect(0, 0, totalW, headerH);
 
@@ -886,8 +891,8 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
       className: "tenure-canvas",
       ariaLabel: "Constituent holding tenure heatmap",
     });
-    canvas.width = totalW * dpr;
-    canvas.height = bodyH * dpr;
+    canvas.width = Math.round(totalW * dpr);
+    canvas.height = Math.round(bodyH * dpr);
     canvas.style.width = `${totalW}px`;
     canvas.style.height = `${bodyH}px`;
 

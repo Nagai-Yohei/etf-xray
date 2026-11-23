@@ -41,6 +41,7 @@ PAT_EXTERNAL_CDN = re.compile(
     r"https?://(?:cdn\.|cdnjs\.|unpkg\.com|cdn\.jsdelivr\.net|ajax\.googleapis\.com)",
     re.IGNORECASE,
 )
+PAT_JAPANESE = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
 
 EXCLUDED_TOP_DIRS = {".git", ".venv", "venv", "data", "dist", "__pycache__", ".wrangler"}
 TEXT_SUFFIXES = {
@@ -189,6 +190,11 @@ def _scan_file_content(
         if PAT_EXTERNAL_CDN.search(content):
             errors.append(f"[SECURITY] External CDN reference detected: {rel_label}")
 
+    # Enforce English-only repository source/config/docs (exclude vendored files and generated dist/)
+    if parts and parts[0] != "dist" and "vendor" not in parts:
+        if PAT_JAPANESE.search(content):
+            errors.append(f"[I18N] Non-English (Japanese) characters detected: {rel_label}")
+
 
 def check_git_tracked_files(errors: list[str]) -> int:
     """Verify no forbidden or ignored files are tracked in Git."""
@@ -240,6 +246,7 @@ def check_database(errors: list[str]) -> str:
             "securities",
             "quarter_prices",
             "financials_annual",
+            "financials_quarterly",
             "financials_ttm",
             "stock_metrics",
         }
@@ -273,6 +280,34 @@ def check_database(errors: list[str]) -> str:
         for sec_id, fy_end, sf in bad_splits:
             errors.append(f"[DB] Invalid split_factor for {sec_id} {fy_end}: {sf}")
 
+        # Verify no ETF reporting date has median implied share price < $1.00 (catches missed $000 scaling)
+        by_etf_date: dict[tuple[str, str], list[float]] = {}
+        for etf_id, as_of, val_usd, shares in conn.execute(
+            "SELECT etf_id, as_of, value_usd, shares FROM etf_holdings WHERE shares > 0 AND value_usd > 0"
+        ).fetchall():
+            by_etf_date.setdefault((etf_id, as_of), []).append(float(val_usd) / float(shares))
+        for (etf_id, as_of), prices in sorted(by_etf_date.items()):
+            prices.sort()
+            med_price = prices[len(prices) // 2]
+            if med_price < 1.0:
+                errors.append(
+                    f"[DB] Suspected $000 scaling bug for {etf_id} {as_of}: median price=${med_price:.4f}"
+                )
+
+        # Verify headline metrics are within sane bounds (catches 1,000x DPS or partial-revenue traps)
+        bad_metrics = conn.execute(
+            """
+            SELECT security_id, ttm_yield, gross_margin
+            FROM stock_metrics
+            WHERE (ttm_yield IS NOT NULL AND (ttm_yield < 0 OR ttm_yield > 1.0))
+               OR (gross_margin IS NOT NULL AND (gross_margin > 1.05 OR gross_margin < -2.0))
+            """
+        ).fetchall()
+        for sec_id, yld, gm in bad_metrics:
+            errors.append(
+                f"[DB] Out-of-range metric for {sec_id}: ttm_yield={yld}, gross_margin={gm}"
+            )
+
         sec_count = conn.execute("SELECT COUNT(*) FROM securities").fetchone()[0]
         ann_count = conn.execute("SELECT COUNT(*) FROM financials_annual").fetchone()[0]
         hold_count = conn.execute("SELECT COUNT(*) FROM etf_holdings").fetchone()[0]
@@ -282,7 +317,7 @@ def check_database(errors: list[str]) -> str:
 
 
 def check_dist_json(errors: list[str]) -> str:
-    """Verify all JSON files under dist/ parse cleanly."""
+    """Verify all JSON files under dist/ parse cleanly and stock index cross-references exist."""
     if not DIST_DIR.is_dir():
         return "skipped (dist not built yet)"
 
@@ -293,6 +328,20 @@ def check_dist_json(errors: list[str]) -> str:
         except Exception as exc:  # noqa: BLE001
             rel = jf.relative_to(PROJECT_ROOT)
             errors.append(f"[DIST] Invalid JSON in {rel}: {exc}")
+
+    # Verify every security_id in stocks/index.json has a corresponding detail JSON file
+    stocks_index_path = DIST_DIR / "data" / "stocks" / "index.json"
+    if stocks_index_path.is_file():
+        try:
+            idx_data = json.loads(stocks_index_path.read_text(encoding="utf-8"))
+            if isinstance(idx_data, dict):
+                stocks_dir = stocks_index_path.parent
+                for sec_id in idx_data:
+                    if not (stocks_dir / f"{sec_id}.json").is_file():
+                        errors.append(f"[DIST] Missing stock detail JSON for {sec_id}")
+        except Exception:  # noqa: BLE001
+            pass
+
     return f"OK ({len(json_files)} JSON files)"
 
 

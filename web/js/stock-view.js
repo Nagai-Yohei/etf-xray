@@ -446,6 +446,10 @@ export async function renderStockView(
           clearNode(plControls);
           clearNode(plCanvasWrap);
 
+          if (plDefs.length > 0 && !plDefs.some((d) => state.plSeries[d.key])) {
+            state.plSeries[plDefs[0].key] = true;
+          }
+
           for (const def of plDefs) {
             const active = Boolean(state.plSeries[def.key]);
             plControls.appendChild(
@@ -705,6 +709,10 @@ export async function renderStockView(
           destroyChart(cfChart);
           clearNode(cfControls);
           clearNode(cfCanvasWrap);
+
+          if (cfDefs.length > 0 && !cfDefs.some((d) => state.cfSeries[d.key])) {
+            state.cfSeries[cfDefs[0].key] = true;
+          }
 
           for (const def of cfDefs) {
             const active = Boolean(state.cfSeries[def.key]);
@@ -999,6 +1007,10 @@ export async function renderStockView(
           destroyChart(bsChart);
           clearNode(bsControls);
           clearNode(bsCanvasWrap);
+
+          if (bsDefs.length > 0 && !bsDefs.some((d) => state.bsSeries[d.key])) {
+            state.bsSeries[bsDefs[0].key] = true;
+          }
 
           for (const def of bsDefs) {
             const active = Boolean(state.bsSeries[def.key]);
@@ -1348,9 +1360,22 @@ export async function renderStockView(
       );
       const body = el("div", { className: "card-body" });
 
-      // Compute YoY deltas (4 quarters prior) before slicing the latest 12 quarters
+      // Compute YoY deltas against the quarter ~1 year (330-400 days) prior before slicing the latest 12 quarters
       const qWithYoy = quarterly.map((q, idx) => {
-        const prev = idx >= 4 ? quarterly[idx - 4] : null;
+        const curMs = Date.parse(q.period_end);
+        let prev = null;
+        if (Number.isFinite(curMs)) {
+          for (let j = idx - 1; j >= 0; j--) {
+            const pMs = Date.parse(quarterly[j].period_end);
+            if (!Number.isFinite(pMs)) continue;
+            const days = (curMs - pMs) / 86400000;
+            if (days >= 330 && days <= 400) {
+              prev = quarterly[j];
+              break;
+            }
+            if (days > 400) break;
+          }
+        }
         const revYoy =
           prev && prev.revenue > 0 && q.revenue != null ? (q.revenue - prev.revenue) / prev.revenue : null;
         return { ...q, revYoy };
