@@ -265,6 +265,8 @@ TAG_MAP_FLOW_USD: dict[str, list[tuple[str, str]]] = {
         ("us-gaap", "PaymentsOfOrdinaryDividends"),
         ("us-gaap", "DividendsCommonStockCash"),
         ("us-gaap", "DividendsCash"),
+        ("us-gaap", "PaymentsOfCapitalDistribution"),
+        ("us-gaap", "PartnersCapitalAccountDistributions"),
         ("ifrs-full", "DividendsPaidClassifiedAsFinancingActivities"),
     ],
     "buybacks": [
@@ -967,6 +969,17 @@ def extract_annual_financials(
         max_day_diff_after=75,
     )
 
+    # Pre-collect single-quarter dividend payments across annual+quarterly forms as a fallback
+    # for issuers that initiated dividends mid-year without tagging a full-year flow (e.g. AAPL FY2012)
+    q_div_paid_all = _select_best_single_quarter(
+        _iter_tag_records(
+            company_facts,
+            TAG_MAP_FLOW_USD["dividends_paid"],
+            ("USD",),
+            ANNUAL_FORMS | QUARTERLY_FORMS,
+        )
+    )
+
     # 4. Assemble annual rows and apply split adjustments
     rows: list[dict[str, Any]] = []
     for fy_end in filtered_ends:
@@ -1012,8 +1025,8 @@ def extract_annual_financials(
         eps_adj = (eps_rec.val / eps_factor) if eps_rec is not None else None
         dps_d_adj = (dps_d_rec.val / dps_d_factor) if dps_d_rec is not None else None
         dps_p_adj = (dps_p_rec.val / dps_p_factor) if dps_p_rec is not None else None
-        sh_dil_adj = (sh_dil_rec.val * sh_dil_factor) if sh_dil_rec is not None else None
-        sh_out_adj = (sh_out_rec.val * sh_out_factor) if sh_out_rec is not None else None
+        sh_dil_adj = (sh_dil_rec.val * sh_dil_factor) if (sh_dil_rec is not None and sh_dil_rec.val > 0) else None
+        sh_out_adj = (sh_out_rec.val * sh_out_factor) if (sh_out_rec is not None and sh_out_rec.val > 0) else None
 
         # Correct 1,000x and 1,000,000x XBRL share-count unit scale errors (e.g. shares filed in thousands/millions)
         implied_sh: float | None = None
@@ -1051,6 +1064,27 @@ def extract_annual_financials(
         ocf_val = ocf_rec.val if ocf_rec is not None else None
         fcf_val = (ocf_val - capex_val) if (ocf_val is not None and capex_val is not None) else None
         div_paid_val = abs(div_rec.val) if div_rec is not None else None
+        if (
+            div_paid_val is None
+            and fy_start is not None
+            and ((dps_d_adj is not None and dps_d_adj > 0) or (dps_p_adj is not None and dps_p_adj > 0))
+        ):
+            # Sum non-overlapping quarterly PaymentsOfDividends within [fy_start, fy_end] (e.g. AAPL FY2012)
+            d_fys = _parse_date(fy_start)
+            d_fye = _parse_date(fy_end)
+            if d_fys is not None and d_fye is not None:
+                in_fy = [
+                    r
+                    for r in q_div_paid_all.values()
+                    if r.start
+                    and _parse_date(r.start) is not None
+                    and _parse_date(r.end) is not None
+                    and (_parse_date(r.start) - d_fys).days >= -7
+                    and (_parse_date(r.end) - d_fye).days <= 7
+                    and abs(r.val) > 0
+                ]
+                if in_fy:
+                    div_paid_val = sum(abs(r.val) for r in in_fy)
         buyback_val = abs(buyback_rec.val) if buyback_rec is not None else None
 
         # Representative split factor (based on PL filing date)
@@ -1074,6 +1108,35 @@ def extract_annual_financials(
 
         dps_d_adj = _clean_per_share_dps(dps_d_adj, dps_d_factor)
         dps_p_adj = _clean_per_share_dps(dps_p_adj, dps_p_factor)
+
+        # Validate dps_declared against dps_paid and implied DPS (catches PLD footnote sub-item leaks,
+        # ALLY 0.0 placeholders, and single-quarter values mis-tagged with annual durations)
+        if dps_d_adj is not None:
+            if dps_d_adj == 0.0 and (
+                (dps_p_adj is not None and dps_p_adj > 0.0)
+                or (est_dps is not None and est_dps > 0.05)
+            ):
+                dps_d_adj = None
+            elif (
+                dps_d_adj > 0.0
+                and dps_p_adj is not None
+                and dps_p_adj > 0.0
+                and (dps_d_adj < dps_p_adj * 0.5 or dps_d_adj > dps_p_adj * 2.0)
+            ):
+                # When declared disagrees >50% with paid while implied corroborates paid, discard declared
+                if est_dps is None or (0.5 * dps_p_adj <= est_dps <= 1.5 * dps_p_adj) or (
+                    abs(est_dps - dps_p_adj) < abs(est_dps - dps_d_adj)
+                ):
+                    dps_d_adj = None
+            elif (
+                dps_d_adj > 0.0
+                and dps_p_adj is None
+                and est_dps is not None
+                and est_dps > 0.20
+                and 0.15 <= (dps_d_adj / est_dps) <= 0.35
+            ):
+                # Single-quarter DPS (~1/4 of annual implied) mis-tagged as annual
+                dps_d_adj = None
 
         rows.append(
             {
@@ -1102,7 +1165,7 @@ def extract_annual_financials(
                 "dividends_paid": div_paid_val,
                 "buybacks": buyback_val,
                 "total_assets": instant_usd["total_assets"][fy_end].val
-                if fy_end in instant_usd["total_assets"]
+                if (fy_end in instant_usd["total_assets"] and instant_usd["total_assets"][fy_end].val > 0)
                 else None,
                 "current_assets": instant_usd["current_assets"][fy_end].val
                 if fy_end in instant_usd["current_assets"]
@@ -1147,6 +1210,7 @@ def _find_latest_ytd_pair(
     latest_fy_start: str | None,
     latest_fy_end: str,
     target_q_end: str | None = None,
+    require_same_tag: bool = False,
 ) -> tuple[str | None, float | None, float | None]:
     """Return (q_end, cur_ytd, prev_ytd) for 10-Q YTD after the latest 10-K and its prior-year counterpart."""
     d_fy_end = _parse_date(latest_fy_end)
@@ -1216,6 +1280,8 @@ def _find_latest_ytd_pair(
         prev_rec = same_accn[0]
     else:
         same_tag = [r for r in prev_candidates if r.tag == cur_rec.tag]
+        if require_same_tag and not same_tag:
+            return latest_q_end, None, None
         pool = same_tag or prev_candidates
         min_p = min(r.priority for r in pool)
         prev_rec = max((r for r in pool if r.priority == min_p), key=_rec_recency_key)
@@ -1249,20 +1315,30 @@ def extract_ttm_financials(
     target_q_end = max(detected_q_ends) if detected_q_ends else None
     period_end = target_q_end or latest_fy_end
 
-    def calc_ttm_usd(metric: str, abs_outflow: bool = False) -> float | None:
+    def calc_ttm_usd(
+        metric: str,
+        abs_outflow: bool = False,
+        require_same_tag: bool = False,
+    ) -> tuple[float | None, bool]:
         ann_val = latest_ann.get(metric)
         if ann_val is None:
-            return None
+            return None, False
         if target_q_end is None:
-            return ann_val
+            return ann_val, False
         recs = _iter_tag_records(company_facts, TAG_MAP_FLOW_USD[metric], ("USD",), QUARTERLY_FORMS)
-        _, cur_v, prev_v = _find_latest_ytd_pair(recs, latest_fy_start, latest_fy_end, target_q_end)
+        _, cur_v, prev_v = _find_latest_ytd_pair(
+            recs,
+            latest_fy_start,
+            latest_fy_end,
+            target_q_end,
+            require_same_tag=require_same_tag,
+        )
         if cur_v is None or prev_v is None:
-            return ann_val
+            return ann_val, False
         if abs_outflow:
             cur_v = abs(cur_v)
             prev_v = abs(prev_v)
-        return ann_val + cur_v - prev_v
+        return ann_val + cur_v - prev_v, True
 
     def calc_ttm_ps(metric: str) -> float | None:
         ann_val = latest_ann.get(metric)
@@ -1278,7 +1354,7 @@ def extract_ttm_financials(
             return ann_val
         return round(ann_val + cur_v - prev_v, 4)
 
-    revenue_ttm = calc_ttm_usd("revenue")
+    revenue_ttm, _ = calc_ttm_usd("revenue")
     # Bank revenue synthesis for TTM when 10-Q omits Revenues or only tags ASC 606 fee income
     if target_q_end is not None and latest_ann.get("revenue") is not None:
         q_nii = _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), QUARTERLY_FORMS)
@@ -1305,22 +1381,28 @@ def extract_ttm_financials(
                 revenue_ttm = latest_ann["revenue"] + cur_l - prev_l
             elif cur_l > max(0.0, cur_r_std) * 2.0:
                 revenue_ttm = latest_ann["revenue"] + (cur_l + cur_r_std) - (prev_l + prev_r_std)
-    op_inc_ttm = calc_ttm_usd("operating_income")
-    net_inc_ttm = calc_ttm_usd("net_income")
-    ocf_ttm = calc_ttm_usd("operating_cf")
-    capex_ttm = calc_ttm_usd("capex", abs_outflow=True)
-    fcf_ttm = (ocf_ttm - capex_ttm) if (ocf_ttm is not None and capex_ttm is not None) else latest_ann.get("fcf")
+    op_inc_ttm, _ = calc_ttm_usd("operating_income")
+    net_inc_ttm, _ = calc_ttm_usd("net_income")
+    ocf_ttm, ocf_updated = calc_ttm_usd("operating_cf", require_same_tag=True)
+    capex_ttm, capex_updated = calc_ttm_usd("capex", abs_outflow=True, require_same_tag=True)
+    # Require matching update status between OCF and CapEx so TTM FCF never mixes Q3 OCF with prior-FY CapEx
+    if ocf_ttm is not None and capex_ttm is not None and (ocf_updated == capex_updated):
+        fcf_ttm: float | None = ocf_ttm - capex_ttm
+    else:
+        fcf_ttm = latest_ann.get("fcf") if not ocf_updated else None
     eps_ttm = calc_ttm_ps("eps_diluted")
 
-    # TTM DPS: prefer declared basis; fall back to paid basis, rejecting 1,000x+ unit errors
+    # TTM DPS: prefer declared basis; fall back to paid basis, rejecting 0.0 placeholders & 1,000x+ errors
     dps_ttm = calc_ttm_ps("dps_declared")
-    if dps_ttm is None:
+    ann_ref_dps = latest_ann.get("dps_declared") or latest_ann.get("dps_paid")
+    if dps_ttm is None or (dps_ttm == 0.0 and ann_ref_dps is not None and ann_ref_dps > 0.05):
         dps_ttm = calc_ttm_ps("dps_paid")
     if dps_ttm is not None:
-        ann_ref_dps = latest_ann.get("dps_declared") or latest_ann.get("dps_paid")
         if dps_ttm < 0 or dps_ttm > 150.0:
             dps_ttm = None
         elif ann_ref_dps is not None and ann_ref_dps > 0 and dps_ttm > 25.0 and (dps_ttm / ann_ref_dps) > 20.0:
+            dps_ttm = None
+        elif dps_ttm == 0.0 and ann_ref_dps is not None and ann_ref_dps > 0.05:
             dps_ttm = None
 
     # Balance sheet (equity and period-end shares): fetch latest instant at period_end
@@ -1348,13 +1430,17 @@ def extract_ttm_financials(
 
     total_equity = eq_map[period_end].val if period_end in eq_map else latest_ann.get("total_equity")
     sh_rec = sh_bs_map.get(period_end) or sh_dei_map.get(period_end)
-    shares_out = sh_rec.val if sh_rec is not None else latest_ann.get("shares_outstanding")
+    shares_out = (
+        sh_rec.val
+        if (sh_rec is not None and sh_rec.val > 0)
+        else latest_ann.get("shares_outstanding")
+    )
     # Fall back to latest diluted shares when period-end instant is absent (e.g. dual-class issuers like UPS)
-    if shares_out is None:
+    if shares_out is None or shares_out <= 0:
         q_sh_recs = _iter_tag_records(
             company_facts, TAG_MAP_FLOW_SHARES["shares_diluted"], ("shares",), all_forms
         )
-        matching_sh = [r for r in q_sh_recs if r.end == period_end]
+        matching_sh = [r for r in q_sh_recs if r.end == period_end and r.val > 0]
         if matching_sh:
             min_p = min(r.priority for r in matching_sh)
             shares_out = max(
@@ -1363,6 +1449,8 @@ def extract_ttm_financials(
             ).val
         else:
             shares_out = latest_ann.get("shares_diluted")
+    if shares_out is not None and shares_out <= 0:
+        shares_out = None
 
     # Correct 1,000x / 1,000,000x XBRL unit scale errors in TTM period-end shares against latest annual shares
     ann_ref_sh = latest_ann.get("shares_outstanding") or latest_ann.get("shares_diluted")
@@ -1382,11 +1470,11 @@ def extract_ttm_financials(
 
 
 def _select_best_single_quarter(records: list[FactRecord]) -> dict[str, FactRecord]:
-    """Select one standalone 3-month quarterly record (70-110 days) per period_end."""
+    """Select one standalone quarterly record (70-122 days, including 16-week retail Q1) per period_end."""
     by_end_prio: dict[tuple[str, int], FactRecord] = {}
     for rec in records:
         dur = _duration_days(rec.start, rec.end)
-        if dur is None or not (70 <= dur <= 110):
+        if dur is None or not (70 <= dur <= 122):
             continue
         key = (rec.end, rec.priority)
         prev = by_end_prio.get(key)
@@ -1697,36 +1785,54 @@ def extract_quarterly_financials(
     # Compute standalone quarterly OCF/FCF by differencing ascending YTD entries sharing the same start date
     def assign_quarterly_cf(ytd_map: dict[str, FactRecord], ann_field: str, abs_outflow: bool = False) -> dict[str, float]:
         out: dict[str, float] = {}
-        by_start: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        # Store (end, start, val, tag, is_annual) grouped by fiscal-year start month
+        by_start: dict[str, list[tuple[str, str, float, str | None, bool]]] = defaultdict(list)
         for rec in ytd_map.values():
             if not rec.start:
                 continue
             val = abs(rec.val) if abs_outflow else rec.val
-            by_start[rec.start[:7]].append((rec.end, val))
+            by_start[rec.start[:7]].append((rec.end, rec.start, val, rec.tag, False))
 
         # Include annual rows in the matching start-date group
         for ann in recent_annual:
             if ann.get("fy_start") and ann.get(ann_field) is not None:
-                by_start[ann["fy_start"][:7]].append((ann["fy_end"], float(ann[ann_field])))
+                by_start[ann["fy_start"][:7]].append(
+                    (ann["fy_end"], ann["fy_start"], float(ann[ann_field]), None, True)
+                )
 
         for _start_ym, pts in by_start.items():
-            # Deduplicate in ascending end-date order
-            dedup = sorted({e: v for e, v in pts}.items())
-            prev_val = 0.0
+            # Deduplicate in ascending end-date order (prefer 10-Q YTD over annual if same end)
+            by_end_item: dict[str, tuple[str, float, str | None, bool]] = {}
+            for e, s, v, tag, is_ann in pts:
+                if e not in by_end_item or is_ann:
+                    by_end_item[e] = (s, v, tag, is_ann)
+            dedup = sorted(by_end_item.items())
+
+            prev_val: float | None = None
             prev_end: date | None = None
-            for end_str, cum_val in dedup:
+            prev_tag: str | None = None
+            for end_str, (start_str, cum_val, tag, is_ann) in dedup:
                 d_e = _parse_date(end_str)
+                d_s = _parse_date(start_str)
                 if d_e is None:
                     continue
                 if prev_end is None:
-                    # Check for Q1 (~3 months)
-                    out[end_str] = cum_val
+                    # Only assign as standalone Q1 if duration is genuinely ~1 quarter (<= 125 days)
+                    # Prevents dumping 6M YTD into Q2 when Q1 is absent (e.g. TAP 2026-06-30)
+                    dur = (d_e - d_s).days if d_s is not None else None
+                    if dur is not None and 60 <= dur <= 125:
+                        out[end_str] = cum_val
                 else:
                     gap = (d_e - prev_end).days
-                    if 60 <= gap <= 120:
-                        out[end_str] = cum_val - prev_val
+                    # Require matching XBRL tags across 10-Q YTDs (prevents DAL Q2 tag-switch negative CapEx)
+                    tags_compatible = is_ann or prev_tag is None or tag is None or tag == prev_tag
+                    if 60 <= gap <= 125 and tags_compatible and prev_val is not None:
+                        diff_val = cum_val - prev_val
+                        if not (abs_outflow and diff_val < 0):
+                            out[end_str] = diff_val
                 prev_val = cum_val
                 prev_end = d_e
+                prev_tag = tag
         return out
 
     q_ocf_map = assign_quarterly_cf(ytd_ocf, "operating_cf", abs_outflow=False)

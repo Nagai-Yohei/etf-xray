@@ -84,29 +84,27 @@ def rebuild_quarter_prices(conn: sqlite3.Connection) -> int:
 def _compute_dividend_streak(
     annual_rows: list[sqlite3.Row],
 ) -> tuple[int | None, int | None, bool]:
-    """Return consecutive non-cut dividend years, open-start flag, and whether fallback DPS was used."""
-    series: list[tuple[int, float, bool]] = []
-    for row in annual_rows:
-        dps, is_est = _effective_dps(row)
-        if dps is not None:
-            year = int(str(row["fy_end"])[:4])
-            series.append((year, dps, is_est))
-
-    if not series:
+    """Return consecutive non-cut dividend years anchored to the latest annual row, open-start flag, and est flag."""
+    if not annual_rows:
         return None, None, False
 
-    used_est = any(x[2] for x in series)
-    latest_year, latest_dps, _ = series[-1]
-    if latest_dps <= 0:
+    row_dps: list[tuple[float | None, bool]] = [_effective_dps(row) for row in annual_rows]
+    any_paid = any(d is not None and d > 0 for d, _ in row_dps)
+    if not any_paid:
+        return None, None, False
+
+    latest_dps, _ = row_dps[-1]
+    used_est = any(est for d, est in row_dps if d is not None)
+    if latest_dps is None or latest_dps <= 0:
         return 0, 0, used_est
 
     streak = 1
     reached_start = True
     cur_dps = latest_dps
 
-    for idx in range(len(series) - 2, -1, -1):
-        _yr, prev_dps, _ = series[idx]
-        if prev_dps <= 0:
+    for idx in range(len(row_dps) - 2, -1, -1):
+        prev_dps, _ = row_dps[idx]
+        if prev_dps is None or prev_dps <= 0:
             reached_start = False
             break
         # Allow a 1.5% rounding/fx tolerance when checking for non-cut dividends
@@ -118,26 +116,39 @@ def _compute_dividend_streak(
             break
 
     # Mark streak as open-ended (e.g. 15+ yrs) if it runs unbroken back to the earliest fiscal year
-    is_open = 1 if (reached_start and len(series) >= 2) else 0
+    is_open = 1 if (reached_start and len(row_dps) >= 2) else 0
     return streak, is_open, used_est
 
 
 def _find_value_n_years_ago(
-    series: list[tuple[int, float]],
-    latest_year: int,
+    series: list[tuple[str, float]],
+    latest_end: str,
     n_years: int,
 ) -> tuple[float | None, int]:
-    """Find the value n_years prior to latest_year (allowing +/-1 yr) and return (val, actual_span)."""
-    target = latest_year - n_years
-    by_yr = {yr: val for yr, val in series}
-    if target in by_yr:
-        return by_yr[target], n_years
-    # Absorb 1-year boundary shifts from 52/53-week fiscal calendars
-    for delta in (-1, 1):
-        if (target + delta) in by_yr:
-            span = latest_year - (target + delta)
-            if span >= max(1, n_years - 1):
-                return by_yr[target + delta], span
+    """Find the value ~n_years prior to latest_end by actual date distance (handles 52/53-week calendars)."""
+    try:
+        d_latest = date.fromisoformat(latest_end[:10])
+    except ValueError:
+        return None, 0
+
+    target_days = n_years * 365.25
+    best: tuple[float, float, int] | None = None
+    for end_str, val in series:
+        try:
+            d_cur = date.fromisoformat(end_str[:10])
+        except ValueError:
+            continue
+        days = (d_latest - d_cur).days
+        if days <= 0:
+            continue
+        err = abs(days - target_days)
+        if err <= 120.0:
+            span = max(1, round(days / 365.25))
+            if best is None or err < best[0]:
+                best = (err, val, span)
+
+    if best is not None:
+        return best[1], best[2]
     return None, 0
 
 
@@ -190,24 +201,92 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
 
         # Headline values from TTM / latest annual row
         latest_dps_ann, latest_dps_est = _effective_dps(latest_ann) if latest_ann else (None, False)
-        dps_ttm = float(ttm["dps_ttm"]) if (ttm and ttm["dps_ttm"] is not None) else latest_dps_ann
+
+        # Guard against one-time pre-spin / recapitalization cash distributions mistaken for regular dividends
+        # (e.g. SOLS $1.5B pre-spin distribution to parent with no dps_declared/dps_paid and 0 in all prior years)
+        is_one_time_capital_dist = False
+        if (
+            latest_ann is not None
+            and latest_dps_est
+            and latest_dps_ann is not None
+            and latest_dps_ann > 0
+            and not any(r["dps_declared"] is not None or r["dps_paid"] is not None for r in ann_rows)
+            and not any(
+                r["dividends_paid"] is not None and float(r["dividends_paid"]) > 0
+                for r in ann_rows[:-1]
+            )
+            and latest_ann["dividends_paid"] is not None
+            and float(latest_ann["dividends_paid"]) > max(float(latest_ann["net_income"] or 0.0), 0.0) * 3.0
+        ):
+            is_one_time_capital_dist = True
+            latest_dps_ann = None
+            notes.append("Excluded likely one-time pre-spin/capital distribution from recurring dividend metrics")
+
+        dps_ttm = (
+            None
+            if is_one_time_capital_dist
+            else (float(ttm["dps_ttm"]) if (ttm and ttm["dps_ttm"] is not None) else latest_dps_ann)
+        )
         eps_ttm = (
             float(ttm["eps_ttm"])
             if (ttm and ttm["eps_ttm"] is not None)
             else (float(latest_ann["eps_diluted"]) if (latest_ann and latest_ann["eps_diluted"] is not None) else None)
         )
 
+        # Guard against stale-price distortions on former holdings whose last implied price predates
+        # their latest SEC financials by > 15 months (e.g. FSS 2011 price vs 2025 TTM)
+        price_is_stale = False
+        fund_ref_date = (
+            ttm["period_end"]
+            if (ttm and ttm["period_end"])
+            else (latest_ann["fy_end"] if latest_ann else None)
+        )
+        if latest_price_date and fund_ref_date:
+            try:
+                gap_days = (
+                    date.fromisoformat(str(fund_ref_date)[:10])
+                    - date.fromisoformat(str(latest_price_date)[:10])
+                ).days
+                if gap_days > 460:
+                    price_is_stale = True
+                    notes.append("Price-based ratios omitted (latest implied price predates latest financials)")
+            except ValueError:
+                pass
+
         # Dividend yield, P/E, and P/B based on implied quarter-end price
         ttm_yield = (
             (dps_ttm / latest_price)
-            if (dps_ttm is not None and dps_ttm >= 0 and latest_price and latest_price > 0)
+            if (
+                not price_is_stale
+                and dps_ttm is not None
+                and dps_ttm >= 0
+                and latest_price
+                and latest_price > 0
+            )
             else None
         )
         pe_ratio = (
             (latest_price / eps_ttm)
-            if (eps_ttm is not None and eps_ttm > 0 and latest_price and latest_price > 0)
+            if (
+                not price_is_stale
+                and eps_ttm is not None
+                and eps_ttm > 0
+                and latest_price
+                and latest_price > 0
+            )
             else None
         )
+
+        # Flag potential special/one-time dividend spikes in data_notes (e.g. BRSL)
+        if ttm_yield is not None and ttm_yield > 0.12 and len(ann_rows) >= 2:
+            prev_dps_val, _ = _effective_dps(ann_rows[-2])
+            if (
+                dps_ttm is not None
+                and prev_dps_val is not None
+                and prev_dps_val > 0
+                and dps_ttm > prev_dps_val * 2.5
+            ):
+                notes.append("TTM yield includes potential special/one-time dividend")
 
         eq_latest = (
             float(ttm["total_equity"])
@@ -224,7 +303,15 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             )
         )
         pb_ratio = None
-        if eq_latest is not None and eq_latest > 0 and sh_latest and sh_latest > 0 and latest_price and latest_price > 0:
+        if (
+            not price_is_stale
+            and eq_latest is not None
+            and eq_latest > 0
+            and sh_latest
+            and sh_latest > 0
+            and latest_price
+            and latest_price > 0
+        ):
             bps = eq_latest / sh_latest
             if bps > 0:
                 pb_ratio = latest_price / bps
@@ -246,21 +333,23 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
 
         if latest_ann is not None:
             ann_eps = latest_ann["eps_diluted"]
-            if latest_dps_ann is not None and ann_eps is not None and float(ann_eps) > 0:
-                payout_ratio_eps = latest_dps_ann / float(ann_eps)
-            elif (
-                latest_ann["dividends_paid"] is not None
-                and latest_ann["net_income"] is not None
-                and float(latest_ann["net_income"]) > 0
-            ):
-                payout_ratio_eps = float(latest_ann["dividends_paid"]) / float(latest_ann["net_income"])
+            if not is_one_time_capital_dist:
+                if latest_dps_ann is not None and ann_eps is not None and float(ann_eps) > 0:
+                    payout_ratio_eps = latest_dps_ann / float(ann_eps)
+                elif (
+                    ann_eps is None
+                    and latest_ann["dividends_paid"] is not None
+                    and latest_ann["net_income"] is not None
+                    and float(latest_ann["net_income"]) > 0
+                ):
+                    payout_ratio_eps = float(latest_ann["dividends_paid"]) / float(latest_ann["net_income"])
 
-            if (
-                latest_ann["dividends_paid"] is not None
-                and latest_ann["fcf"] is not None
-                and float(latest_ann["fcf"]) > 0
-            ):
-                payout_ratio_fcf = float(latest_ann["dividends_paid"]) / float(latest_ann["fcf"])
+                if (
+                    latest_ann["dividends_paid"] is not None
+                    and latest_ann["fcf"] is not None
+                    and float(latest_ann["fcf"]) > 0
+                ):
+                    payout_ratio_fcf = float(latest_ann["dividends_paid"]) / float(latest_ann["fcf"])
 
             rev = latest_ann["revenue"]
             if rev is not None and float(rev) > 0:
@@ -338,21 +427,22 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
 
         # 5-year share count change (negative indicates net buybacks)
         # Prefer a consistent basis (diluted-to-diluted or outstanding-to-outstanding) anchored
-        # to the latest fiscal year so stale historical rows (e.g. BRK.B pre-2015) are excluded.
+        # to the latest fiscal year and matched by actual fy_end date distance.
         if latest_ann is not None:
-            latest_fy_yr = int(str(latest_ann["fy_end"])[:4])
+            latest_fy_end = str(latest_ann["fy_end"])
+            latest_fy_yr = int(latest_fy_end[:4])
             sh_dil_series = [
-                (int(str(r["fy_end"])[:4]), float(r["shares_diluted"]))
+                (str(r["fy_end"]), float(r["shares_diluted"]))
                 for r in ann_rows
                 if r["shares_diluted"] is not None and float(r["shares_diluted"]) > 0
             ]
             sh_out_series = [
-                (int(str(r["fy_end"])[:4]), float(r["shares_outstanding"]))
+                (str(r["fy_end"]), float(r["shares_outstanding"]))
                 for r in ann_rows
                 if r["shares_outstanding"] is not None and float(r["shares_outstanding"]) > 0
             ]
             sh_mixed_series = [
-                (int(str(r["fy_end"])[:4]), float(r["shares_diluted"] or r["shares_outstanding"]))
+                (str(r["fy_end"]), float(r["shares_diluted"] or r["shares_outstanding"]))
                 for r in ann_rows
                 if (r["shares_diluted"] or r["shares_outstanding"])
                 and float(r["shares_diluted"] or r["shares_outstanding"]) > 0
@@ -360,44 +450,47 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             for cand_series in (sh_dil_series, sh_out_series, sh_mixed_series):
                 if not cand_series:
                     continue
-                ly_s, lv_s = cand_series[-1]
-                if latest_fy_yr - ly_s > 1:
+                le_s, lv_s = cand_series[-1]
+                if latest_fy_yr - int(le_s[:4]) > 1:
                     continue
-                v5_s, _ = _find_value_n_years_ago(cand_series, ly_s, 5)
+                v5_s, _ = _find_value_n_years_ago(cand_series, le_s, 5)
                 if v5_s is not None and v5_s > 0:
                     share_change_5y = (lv_s / v5_s) - 1.0
                     break
 
         # Consecutive non-cut dividend streak & dividend/revenue CAGRs
-        div_streak_years, div_streak_open, used_est_dps = _compute_dividend_streak(ann_rows)
-        if used_est_dps or latest_dps_est:
+        if is_one_time_capital_dist:
+            div_streak_years, div_streak_open, used_est_dps = None, None, False
+        else:
+            div_streak_years, div_streak_open, used_est_dps = _compute_dividend_streak(ann_rows)
+        if used_est_dps or (latest_dps_est and not is_one_time_capital_dist):
             notes.append("DPS fallback (dividends_paid/shares) used for missing years")
 
         dps_series = [
-            (int(str(r["fy_end"])[:4]), val)
+            (str(r["fy_end"]), val)
             for r in ann_rows
             for val, _ in [_effective_dps(r)]
             if val is not None and val > 0
         ]
         rev_series = [
-            (int(str(r["fy_end"])[:4]), float(r["revenue"]))
+            (str(r["fy_end"]), float(r["revenue"]))
             for r in ann_rows
             if r["revenue"] is not None and float(r["revenue"]) > 0
         ]
 
         div_cagr_5y = None
         div_cagr_10y = None
-        if dps_series:
-            ly, lv = dps_series[-1]
-            v5, span5 = _find_value_n_years_ago(dps_series, ly, 5)
+        if dps_series and not is_one_time_capital_dist:
+            le, lv = dps_series[-1]
+            v5, span5 = _find_value_n_years_ago(dps_series, le, 5)
             div_cagr_5y = _calc_cagr(v5, lv, span5)
-            v10, span10 = _find_value_n_years_ago(dps_series, ly, 10)
+            v10, span10 = _find_value_n_years_ago(dps_series, le, 10)
             div_cagr_10y = _calc_cagr(v10, lv, span10)
 
         rev_cagr_5y = None
         if rev_series:
-            ly, lv = rev_series[-1]
-            v5, span5 = _find_value_n_years_ago(rev_series, ly, 5)
+            le, lv = rev_series[-1]
+            v5, span5 = _find_value_n_years_ago(rev_series, le, 5)
             rev_cagr_5y = _calc_cagr(v5, lv, span5)
 
         if not ann_rows:

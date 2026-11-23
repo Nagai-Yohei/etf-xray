@@ -366,7 +366,16 @@ export async function renderStockView(
     const showCharts = state.viewMode !== "tables";
     const showTables = state.viewMode !== "charts";
     const compactTables = state.viewMode === "both";
-    const fyLabels = annual.map((r) => r.fy_end.slice(0, 4));
+    // Disambiguate duplicate calendar years on 52/53-week fiscal calendars (e.g. 2023-01 and 2023-12)
+    const yrCounts = new Map();
+    for (const r of annual) {
+      const y = r.fy_end.slice(0, 4);
+      yrCounts.set(y, (yrCounts.get(y) || 0) + 1);
+    }
+    const fyLabels = annual.map((r) => {
+      const y = r.fy_end.slice(0, 4);
+      return (yrCounts.get(y) || 0) > 1 ? r.fy_end.slice(0, 7) : y;
+    });
     const hasAnnual = annual.length > 0;
 
     if (!hasAnnual && state.activeTab !== "etf") {
@@ -854,8 +863,12 @@ export async function renderStockView(
             ],
             annualDesc.map((r) => {
               const adjFcf = r.fcf != null && r.sbc != null ? r.fcf - r.sbc : null;
+              const effDps = effectiveDps(r);
+              // Do not display Total Return as $0 or buybacks-only when dividends were paid (DPS > 0)
+              // but aggregate Dividends Paid cash flow tag was missing in SEC XBRL
+              const missingDivCash = r.dividends_paid == null && effDps != null && effDps > 0;
               const totalRet =
-                r.dividends_paid != null || r.buybacks != null
+                !missingDivCash && (r.dividends_paid != null || r.buybacks != null)
                   ? (r.dividends_paid || 0) + (r.buybacks || 0)
                   : null;
               return [
@@ -1290,25 +1303,6 @@ export async function renderStockView(
           data: { labels: fyLabels, datasets: divDs },
           options: baseChartOptions(fmtAxisUsd, hasRight ? fmtAxisPct : null),
         });
-
-        const hasPayoutGap = annual.some((r) => {
-          const d = effectiveDps(r);
-          const epsGap =
-            d != null && (r.eps_diluted == null || r.eps_diluted <= 0 || (d / r.eps_diluted) * 100 > 250);
-          const fcfGap =
-            r.dividends_paid != null &&
-            r.dividends_paid > 0 &&
-            (r.fcf == null || r.fcf <= 0 || (r.dividends_paid / r.fcf) * 100 > 250);
-          return epsGap || fcfGap;
-        });
-        if (hasPayoutGap) {
-          body.appendChild(
-            el("p", {
-              className: "section-note",
-              text: "Payout lines omit years with negative EPS/FCF or payout ratios above 250% (see table below for exact figures).",
-            })
-          );
-        }
       }
 
       if (showTables) {
@@ -1339,6 +1333,36 @@ export async function renderStockView(
           )
         );
       }
+
+      const hasPayoutGap =
+        showCharts &&
+        annual.some((r) => {
+          const d = effectiveDps(r);
+          const epsGap =
+            d != null && (r.eps_diluted == null || r.eps_diluted <= 0 || (d / r.eps_diluted) * 100 > 250);
+          const fcfGap =
+            r.dividends_paid != null &&
+            r.dividends_paid > 0 &&
+            (r.fcf == null || r.fcf <= 0 || (r.dividends_paid / r.fcf) * 100 > 250);
+          return epsGap || fcfGap;
+        });
+      const divNotes = [
+        "Payout (EPS) is calculated on a per-share basis (Effective DPS ÷ Diluted EPS); Payout (FCF) uses aggregate cash flows (Dividends Paid ÷ FCF). Headline KPI payout ratios use the latest full fiscal year.",
+      ];
+      if (hasPayoutGap) {
+        divNotes.push(
+          "Payout lines omit years with negative EPS/FCF or payout ratios above 250% (see table below for exact figures)."
+        );
+      }
+      if (m.data_notes && /special|one-time|stale|predates/i.test(m.data_notes)) {
+        divNotes.push(`Note: ${m.data_notes}.`);
+      }
+      body.appendChild(
+        el("p", {
+          className: "section-note",
+          text: divNotes.join(" "),
+        })
+      );
 
       card.appendChild(body);
       sectionsContainer.appendChild(card);

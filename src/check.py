@@ -308,6 +308,51 @@ def check_database(errors: list[str]) -> str:
                 f"[DB] Out-of-range metric for {sec_id}: ttm_yield={yld}, gross_margin={gm}"
             )
 
+        # Verify no placeholder 0.0 values for share counts or total assets
+        bad_zeros = conn.execute(
+            """
+            SELECT security_id, fy_end
+            FROM financials_annual
+            WHERE (shares_diluted IS NOT NULL AND shares_diluted <= 0)
+               OR (shares_outstanding IS NOT NULL AND shares_outstanding <= 0)
+               OR (total_assets IS NOT NULL AND total_assets <= 0)
+            """
+        ).fetchall()
+        if bad_zeros:
+            errors.append(
+                f"[DB] Non-positive placeholder shares/assets in financials_annual: {len(bad_zeros)} row(s)"
+            )
+
+        # Verify EPS <= 0 latest annual rows never receive a positive payout_ratio_eps
+        bad_neg_eps_payout = conn.execute(
+            """
+            SELECT m.security_id, m.payout_ratio_eps, a.eps_diluted
+            FROM stock_metrics m
+            JOIN financials_annual a ON a.security_id = m.security_id
+            WHERE a.fy_end = (SELECT MAX(fy_end) FROM financials_annual WHERE security_id = m.security_id)
+              AND a.eps_diluted IS NOT NULL AND a.eps_diluted <= 0
+              AND m.payout_ratio_eps IS NOT NULL
+            """
+        ).fetchall()
+        for sec_id, pr, eps in bad_neg_eps_payout:
+            errors.append(
+                f"[DB] payout_ratio_eps={pr} set despite non-positive EPS={eps} for {sec_id}"
+            )
+
+        # Verify warrants/preferreds/legacy .OLD entities do not carry common-stock yield/P/E
+        bad_non_common = conn.execute(
+            """
+            SELECT security_id, ttm_yield, pe_ratio
+            FROM stock_metrics
+            WHERE (security_id LIKE '%.WS' OR security_id LIKE '%.WT' OR security_id LIKE '%.OLD')
+              AND (ttm_yield IS NOT NULL OR pe_ratio IS NOT NULL)
+            """
+        ).fetchall()
+        for sec_id, yld, pe in bad_non_common:
+            errors.append(
+                f"[DB] Non-common/legacy security {sec_id} has common-stock metrics (yield={yld}, pe={pe})"
+            )
+
         sec_count = conn.execute("SELECT COUNT(*) FROM securities").fetchone()[0]
         ann_count = conn.execute("SELECT COUNT(*) FROM financials_annual").fetchone()[0]
         hold_count = conn.execute("SELECT COUNT(*) FROM etf_holdings").fetchone()[0]
