@@ -29,6 +29,18 @@ import {
   fmtUsdCompact,
 } from "./dom.js";
 
+const SECTOR_LABELS = {
+  reit: "REIT",
+  bank: "Bank",
+  insurance: "Insurance",
+  asset_mgmt: "Asset Mgmt / Financial",
+  utility: "Utility",
+  energy_upstream: "Energy",
+  telecom: "Telecom",
+};
+
+const FINANCIAL_SECTORS = new Set(["bank", "insurance", "asset_mgmt"]);
+
 function effectiveDps(row) {
   if (row.dps_declared !== null && row.dps_declared !== undefined) return row.dps_declared;
   if (row.dps_paid !== null && row.dps_paid !== undefined) return row.dps_paid;
@@ -131,6 +143,10 @@ export async function renderStockView(
   const quarterly = detail.quarterly || [];
 
   const displayTicker = detail.ticker || detail.security_id;
+  const sectorGroup = detail.sector_group || null;
+  const isReit = sectorGroup === "reit";
+  const isBankOrInsurer = sectorGroup === "bank" || sectorGroup === "insurance";
+  const isFinancial = FINANCIAL_SECTORS.has(sectorGroup);
   document.title = `${displayTicker} — ${detail.name} | ETF X-Ray`;
   if (typeof setTopbarContext === "function") {
     setTopbarContext({
@@ -221,11 +237,23 @@ export async function renderStockView(
     });
   });
 
+  const sectorBadge =
+    sectorGroup && SECTOR_LABELS[sectorGroup]
+      ? el("span", {
+          className: "badge badge-blue",
+          text: SECTOR_LABELS[sectorGroup],
+          title: detail.sic
+            ? `SEC SIC ${detail.sic}${detail.sic_description ? `: ${detail.sic_description}` : ""}`
+            : null,
+        })
+      : null;
+
   root.appendChild(
     el("div", { className: "view-header" }, [
       el("div", {}, [
         el("div", { className: "view-title-row" }, [
           el("h1", { className: "view-title", text: detail.ticker || detail.security_id }),
+          sectorBadge,
           ...etfBadges,
         ]),
         el("p", {
@@ -263,11 +291,15 @@ export async function renderStockView(
   // 3. Summary KPI cards (8 cards)
   const ttmTag = ttm.period_end ? ` · TTM to ${ttm.period_end}` : "";
   const fyTag = latestAnn?.fy_end ? `FY${latestAnn.fy_end.slice(0, 4)} basis` : "Latest fiscal year basis";
+  const hasVarDivNote = Boolean(m.data_notes && /variable\/special|special\/one-time/i.test(m.data_notes));
   const kpis = [
     {
       label: "TTM Dividend Yield",
       value: fmtPct(m.ttm_yield, 2),
-      sub: `TTM DPS: ${fmtPerShare(ttm.dps_ttm)}${ttmTag}`,
+      sub: `TTM DPS: ${fmtPerShare(ttm.dps_ttm)}${ttmTag}${hasVarDivNote ? " · incl. variable/special" : ""}`,
+      title: hasVarDivNote
+        ? "Trailing yield reflects variable or special dividends and may differ materially from regular quarterly distributions."
+        : null,
     },
     {
       label: "P/E (TTM) / P/B",
@@ -283,7 +315,11 @@ export async function renderStockView(
     {
       label: "Payout (EPS / FCF)",
       value: `${fmtPct(m.payout_ratio_eps, 1)} / ${fmtPct(m.payout_ratio_fcf, 1)}`,
-      sub: fyTag,
+      sub: isReit
+        ? "Omitted for REITs (FFO/AFFO standard)"
+        : isBankOrInsurer
+          ? `${fyTag} · FCF payout n/a for financials`
+          : fyTag,
     },
     {
       label: hasOpIncome ? "Gross / Op. Margin" : "Gross / Pretax Margin",
@@ -291,19 +327,23 @@ export async function renderStockView(
       sub: `${fyTag} · 5Y Rev CAGR: ${fmtPct(m.rev_cagr_5y, 1, true)}`,
     },
     {
-      label: "ROIC / ROE",
-      value: `${fmtPct(m.roic, 1)} / ${fmtPct(m.roe, 1)}`,
+      label: isFinancial ? "ROE (ROIC n/a)" : "ROIC / ROE",
+      value: isFinancial ? fmtPct(m.roe, 1) : `${fmtPct(m.roic, 1)} / ${fmtPct(m.roe, 1)}`,
       sub: `${fyTag} · Equity Ratio: ${fmtPct(m.equity_ratio, 1)}`,
     },
     {
       label: "5Y Share Count Δ",
       value: fmtPct(m.share_change_5y, 1, true),
-      sub: `Adj. FCF Margin (ex-SBC): ${fmtPct(m.fcf_ex_sbc_margin ?? m.fcf_margin, 1)}`,
+      sub: isBankOrInsurer
+        ? "FCF margin n/a for banks & insurers"
+        : `Adj. FCF Margin (ex-SBC): ${fmtPct(m.fcf_ex_sbc_margin ?? m.fcf_margin, 1)}`,
     },
     {
       label: "Int. Cov. / Curr. Ratio",
       value: `${fmtMultiple(m.interest_coverage)} / ${fmtMultiple(m.current_ratio)}`,
-      sub: `${fyTag} · Net Debt / FCF: ${fmtMultiple(m.net_debt_to_fcf)}`,
+      sub: isFinancial
+        ? `${fyTag} · Net Debt / FCF n/a for financials`
+        : `${fyTag} · Net Debt / FCF: ${fmtMultiple(m.net_debt_to_fcf)}`,
     },
   ];
 
@@ -919,6 +959,19 @@ export async function renderStockView(
       const cfNotes = [
         "Total Cash Returned = Dividends Paid + Share Buybacks (excludes share price appreciation); CapEx is plotted as a negative outflow on the chart.",
       ];
+      if (sectorGroup === "utility") {
+        cfNotes.push(
+          "Regulated utility: heavy capital expenditures routinely produce negative Free Cash Flow; dividends are typically supported by operating cash flow and regulated capital recovery."
+        );
+      } else if (isBankOrInsurer) {
+        cfNotes.push(
+          "Bank / Insurer: operating cash flows reflect customer deposit, loan, and reserve movements; Free Cash Flow is not a standard solvency metric for financial institutions."
+        );
+      } else if (isReit) {
+        cfNotes.push(
+          "REIT: standard SEC XBRL CapEx excludes property acquisitions and developments; GAAP Free Cash Flow does not represent AFFO."
+        );
+      }
       if (!hasAnyValue(annual.slice(-3).map((r) => r.capex))) {
         cfNotes.push(
           "CapEx is not separately reported in standard SEC XBRL cash flow tags for recent fiscal years; Free Cash Flow is shown as — where unavailable."
@@ -1088,7 +1141,7 @@ export async function renderStockView(
 
           for (const opt of [
             { id: "shares", label: "Share Count (Buyback Effect)" },
-            { id: "health", label: "ROIC & Liquidity" },
+            { id: "health", label: isFinancial ? "ROE & Liquidity" : "ROIC & Liquidity" },
           ]) {
             rightControls.appendChild(
               el("button", {
@@ -1126,21 +1179,29 @@ export async function renderStockView(
               options: baseChartOptions((v) => `${fmtAxisNum(v, 0)}M`),
             });
           } else {
-            const roicData = annual.map((r) => {
-              const v = calcAnnualRoic(r);
-              return v != null && v > -1 && v < 2 ? +(v * 100).toFixed(1) : null;
-            });
+            const effData = isFinancial
+              ? annual.map((r) => {
+                  const v =
+                    r.net_income != null && r.total_equity > 0
+                      ? r.net_income / r.total_equity
+                      : null;
+                  return v != null && v > -1 && v < 2 ? +(v * 100).toFixed(1) : null;
+                })
+              : annual.map((r) => {
+                  const v = calcAnnualRoic(r);
+                  return v != null && v > -1 && v < 2 ? +(v * 100).toFixed(1) : null;
+                });
             const currData = annual.map((r) =>
               r.current_assets != null && r.current_liabilities > 0
                 ? +(r.current_assets / r.current_liabilities).toFixed(2)
                 : null
             );
             const ds = [];
-            if (hasAnyValue(roicData)) {
+            if (hasAnyValue(effData)) {
               ds.push({
                 type: "line",
-                label: "ROIC (%)",
-                data: roicData,
+                label: isFinancial ? "ROE (%)" : "ROIC (%)",
+                data: effData,
                 borderColor: PALETTE.blue,
                 backgroundColor: PALETTE.blue,
                 borderWidth: 2.2,
@@ -1156,12 +1217,12 @@ export async function renderStockView(
                 label: "Current Ratio (x)",
                 data: currData,
                 backgroundColor: PALETTE.emeraldSoft,
-                yAxisID: hasAnyValue(roicData) ? "y1" : "y",
+                yAxisID: hasAnyValue(effData) ? "y1" : "y",
                 order: 2,
               });
             }
-            const leftFmt = hasAnyValue(roicData) ? fmtAxisPct : (v) => `${fmtAxisNum(v, 1)}x`;
-            const rightFmt = hasAnyValue(roicData) && hasCurr ? (v) => `${fmtAxisNum(v, 1)}x` : null;
+            const leftFmt = hasAnyValue(effData) ? fmtAxisPct : (v) => `${fmtAxisNum(v, 1)}x`;
+            const rightFmt = hasAnyValue(effData) && hasCurr ? (v) => `${fmtAxisNum(v, 1)}x` : null;
             bsRightChart = createChart(canvas, {
               type: "bar",
               data: { labels: fyLabels, datasets: ds },
@@ -1202,7 +1263,7 @@ export async function renderStockView(
               { label: "Goodwill & Intang.", num: true },
               { label: "Curr. Ratio", num: true },
               { label: "Int. Cov.", num: true },
-              { label: "ROIC", num: true },
+              { label: isFinancial ? "ROE" : "ROIC", num: true },
               { label: "Shares", num: true },
             ],
             annualDesc.map((r) => {
@@ -1215,6 +1276,11 @@ export async function renderStockView(
                 r.current_assets != null && r.current_liabilities > 0
                   ? r.current_assets / r.current_liabilities
                   : null;
+              const effRatio = isFinancial
+                ? r.net_income != null && r.total_equity > 0
+                  ? r.net_income / r.total_equity
+                  : null
+                : calcAnnualRoic(r);
               return [
                 r.fy_end,
                 fmtUsdCompact(r.total_assets),
@@ -1224,8 +1290,8 @@ export async function renderStockView(
                 fmtUsdCompact(netDebt),
                 fmtUsdCompact(gwIntang),
                 fmtMultiple(currRatio),
-                fmtMultiple(calcInterestCoverage(r)),
-                fmtPct(calcAnnualRoic(r), 1),
+                sectorGroup === "insurance" ? "—" : fmtMultiple(calcInterestCoverage(r)),
+                fmtPct(effRatio, 1),
                 fmtSharesM(r.shares_diluted || r.shares_outstanding),
               ];
             }),
@@ -1235,6 +1301,15 @@ export async function renderStockView(
       }
 
       const bsNotes = [];
+      if (isFinancial) {
+        bsNotes.push(
+          "Financial balance sheet: ROIC and Net Debt / FCF are not applicable (ROE is shown instead); equity ratio reflects regulatory and sector leverage norms."
+        );
+      } else if (sectorGroup === "telecom") {
+        bsNotes.push(
+          "Telecom / infrastructure: a Current Ratio below 1.0x is typical due to recurring subscription cash flows."
+        );
+      }
       if (!hasAnyValue(annual.map((r) => r.total_debt))) {
         bsNotes.push("No short-term or long-term debt reported in standard SEC XBRL balance sheet tags.");
       }
@@ -1243,13 +1318,17 @@ export async function renderStockView(
           "Unclassified balance sheet (common for banks and insurers): Current Ratio is not applicable."
         );
       }
-      const hasClippedRoic = annual.some((r) => {
-        const v = calcAnnualRoic(r);
+      const hasClippedEff = annual.some((r) => {
+        const v = isFinancial
+          ? r.net_income != null && r.total_equity > 0
+            ? r.net_income / r.total_equity
+            : null
+          : calcAnnualRoic(r);
         return v != null && (v <= -1 || v >= 2);
       });
-      if (hasClippedRoic) {
+      if (hasClippedEff) {
         bsNotes.push(
-          "ROIC values outside −100% to +200% are omitted from the chart (see table for exact figures)."
+          `${isFinancial ? "ROE" : "ROIC"} values outside −100% to +200% are omitted from the chart (see table for exact figures).`
         );
       }
       if (bsNotes.length > 0) {
@@ -1281,21 +1360,26 @@ export async function renderStockView(
           const d = effectiveDps(r);
           return d != null ? +d.toFixed(3) : null;
         });
-        const payEpsData = annual.map((r) => {
-          const d = effectiveDps(r);
-          if (d != null && r.eps_diluted > 0) {
-            const pct = (d / r.eps_diluted) * 100;
-            return pct <= 250 ? +pct.toFixed(1) : null;
-          }
-          return null;
-        });
-        const payFcfData = annual.map((r) => {
-          if (r.dividends_paid != null && r.fcf > 0) {
-            const pct = (r.dividends_paid / r.fcf) * 100;
-            return pct <= 250 ? +pct.toFixed(1) : null;
-          }
-          return null;
-        });
+        const payEpsData = isReit
+          ? annual.map(() => null)
+          : annual.map((r) => {
+              const d = effectiveDps(r);
+              if (d != null && r.eps_diluted > 0) {
+                const pct = (d / r.eps_diluted) * 100;
+                return pct <= 250 ? +pct.toFixed(1) : null;
+              }
+              return null;
+            });
+        const payFcfData =
+          isReit || isBankOrInsurer
+            ? annual.map(() => null)
+            : annual.map((r) => {
+                if (r.dividends_paid != null && r.fcf > 0) {
+                  const pct = (r.dividends_paid / r.fcf) * 100;
+                  return pct <= 250 ? +pct.toFixed(1) : null;
+                }
+                return null;
+              });
 
         const divDs = [];
         if (hasAnyValue(dpsData)) {
@@ -1365,8 +1449,10 @@ export async function renderStockView(
                 fmtPerShare(r.dps_paid),
                 fmtPerShare(eff),
                 fmtUsdCompact(r.dividends_paid),
-                eff != null && r.eps_diluted > 0 ? fmtPct(eff / r.eps_diluted, 1) : "—",
-                r.dividends_paid != null && r.fcf > 0 ? fmtPct(r.dividends_paid / r.fcf, 1) : "—",
+                !isReit && eff != null && r.eps_diluted > 0 ? fmtPct(eff / r.eps_diluted, 1) : "—",
+                !isReit && !isBankOrInsurer && r.dividends_paid != null && r.fcf > 0
+                  ? fmtPct(r.dividends_paid / r.fcf, 1)
+                  : "—",
               ];
             }),
             compactTables
@@ -1375,12 +1461,14 @@ export async function renderStockView(
       }
 
       const hasPayoutGap =
+        !isReit &&
         showCharts &&
         annual.some((r) => {
           const d = effectiveDps(r);
           const epsGap =
             d != null && (r.eps_diluted == null || r.eps_diluted <= 0 || (d / r.eps_diluted) * 100 > 250);
           const fcfGap =
+            !isBankOrInsurer &&
             r.dividends_paid != null &&
             r.dividends_paid > 0 &&
             (r.fcf == null || r.fcf <= 0 || (r.dividends_paid / r.fcf) * 100 > 250);
@@ -1388,14 +1476,43 @@ export async function renderStockView(
         });
       const divNotes = [
         "Effective DPS uses DPS Declared when reported, otherwise DPS Paid, otherwise Dividends Paid ÷ diluted shares (a dash means the issuer did not report that specific XBRL tag).",
-        "Payout (EPS) is calculated on a per-share basis (Effective DPS ÷ Diluted EPS); Payout (FCF) uses aggregate cash flows (Dividends Paid ÷ FCF). Headline KPI payout ratios use the latest full fiscal year.",
       ];
+      if (isReit) {
+        divNotes.push(
+          "REIT accounting note: GAAP depreciation compresses Net Income and EPS, and GAAP CapEx excludes property acquisitions. GAAP EPS/FCF payout ratios are omitted because FFO/AFFO is the industry standard."
+        );
+      } else {
+        divNotes.push(
+          "Payout (EPS) is calculated on a per-share basis (Effective DPS ÷ Diluted EPS); Payout (FCF) uses aggregate cash flows (Dividends Paid ÷ FCF). Headline KPI payout ratios use the latest full fiscal year."
+        );
+        if (isBankOrInsurer) {
+          divNotes.push(
+            "Bank / Insurer: FCF-based payout is omitted because Free Cash Flow is not meaningful for financial balance sheets; focus on EPS-based payout and ROE."
+          );
+        } else if (sectorGroup === "energy_upstream") {
+          divNotes.push(
+            "Upstream / integrated energy: commodity cycles and impairments make GAAP EPS volatile; FCF-based payout is generally more informative than EPS-based payout."
+          );
+        } else if (
+          sectorGroup === "utility" &&
+          latestAnn &&
+          latestAnn.dividends_paid != null &&
+          latestAnn.operating_cf > 0
+        ) {
+          divNotes.push(
+            `Regulated utility: latest FY Dividends ÷ Operating CF = ${fmtPct(
+              latestAnn.dividends_paid / latestAnn.operating_cf,
+              1
+            )} (operating cash flow is a better guide to dividend coverage than FCF given heavy regulated CapEx).`
+          );
+        }
+      }
       if (hasPayoutGap) {
         divNotes.push(
           "Payout ratios are not meaningful when EPS or FCF is negative (shown as — in both chart and table); years above 250% are omitted from the chart lines (see table for exact figures)."
         );
       }
-      if (m.data_notes && /special|one-time|stale|predates/i.test(m.data_notes)) {
+      if (m.data_notes && /variable\/special|special|one-time|stale|predates/i.test(m.data_notes)) {
         divNotes.push(`Note: ${m.data_notes}.`);
       }
       body.appendChild(
@@ -1753,6 +1870,9 @@ export async function renderStockView(
     const metaFootItems = [
       "Standardized SEC XBRL data generally begins around FY2009–2011 (SEC XBRL mandate).",
       detail.cik ? `CIK ${detail.cik}` : null,
+      detail.sic
+        ? `SEC SIC ${detail.sic}${detail.sic_description ? ` (${detail.sic_description})` : ""}`
+        : null,
       detail.cusip ? `CUSIP ${detail.cusip}` : null,
       detail.isin ? `ISIN ${detail.isin}` : null,
       m.data_notes ? `Notes: ${m.data_notes}` : null,

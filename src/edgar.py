@@ -189,14 +189,20 @@ class EdgarClient:
             offline_only=offline_only,
         )
 
-    def get_submissions(self, cik: int | str, force_refresh: bool = False) -> dict[str, Any]:
-        """Fetch the submissions JSON listing filings for the given CIK."""
+    def get_submissions(
+        self,
+        cik: int | str,
+        force_refresh: bool = False,
+        offline_only: bool = False,
+    ) -> dict[str, Any]:
+        """Fetch the submissions JSON listing filings and entity metadata (including SIC) for the given CIK."""
         cik10 = normalize_cik(cik)
         url = SUBMISSIONS_URL.format(cik=cik10)
         return self.fetch_json(
             url,
             Path("submissions") / f"CIK{cik10}.json",
             force_refresh=force_refresh,
+            offline_only=offline_only,
         )
 
     def get_all_filings(

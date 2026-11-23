@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
@@ -170,10 +171,11 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
     """Recompute and store stock_metrics for all securities."""
     conn.execute("DELETE FROM stock_metrics")
 
-    sec_ids = [
-        r["security_id"]
-        for r in conn.execute("SELECT security_id FROM securities ORDER BY security_id").fetchall()
-    ]
+    sec_rows = conn.execute(
+        "SELECT security_id, sector_group FROM securities ORDER BY security_id"
+    ).fetchall()
+    sec_ids = [r["security_id"] for r in sec_rows]
+    sector_by_sec = {r["security_id"]: r["sector_group"] for r in sec_rows}
 
     # Latest quarter-end price map
     latest_prices: dict[str, tuple[str, float]] = {}
@@ -291,16 +293,39 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             else None
         )
 
-        # Flag potential special/one-time dividend spikes in data_notes (e.g. BRSL)
-        if ttm_yield is not None and ttm_yield > 0.12 and len(ann_rows) >= 2:
+        # Flag variable/special dividend histories (e.g. BRSL, PGR, ORI, CNA, CHRD) in data_notes
+        if ttm_yield is not None and not is_one_time_capital_dist and len(ann_rows) >= 2:
+            recent_dps = [
+                d
+                for d, _ in (_effective_dps(r) for r in ann_rows[-5:])
+                if d is not None and d > 0
+            ]
             prev_dps_val, _ = _effective_dps(ann_rows[-2])
-            if (
-                dps_ttm is not None
+            is_spike = (
+                ttm_yield > 0.12
+                and dps_ttm is not None
                 and prev_dps_val is not None
                 and prev_dps_val > 0
                 and dps_ttm > prev_dps_val * 2.5
-            ):
-                notes.append("TTM yield includes potential special/one-time dividend")
+            )
+            has_drop = any(
+                recent_dps[j] < recent_dps[j - 1] * 0.85 for j in range(1, len(recent_dps))
+            )
+            is_variable = (
+                ttm_yield >= 0.04
+                and len(recent_dps) >= 3
+                and (
+                    (has_drop and max(recent_dps) / min(recent_dps) >= 2.5)
+                    or (
+                        dps_ttm is not None
+                        and dps_ttm > statistics.median(recent_dps[:-1]) * 1.8
+                    )
+                )
+            )
+            if is_spike or is_variable:
+                notes.append(
+                    "Variable/special dividend history — trailing yield may differ from regular quarterly rate"
+                )
 
         eq_latest = (
             float(ttm["total_equity"])
@@ -439,6 +464,32 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                 and float(latest_ann["current_liabilities"]) > 0
             ):
                 current_ratio = float(latest_ann["current_assets"]) / float(latest_ann["current_liabilities"])
+
+            # Sector-aware suppression of ratios distorted by specialized accounting (derived from SEC SIC)
+            sector_group = sector_by_sec.get(sec_id)
+            if sector_group == "reit":
+                payout_ratio_eps = None
+                payout_ratio_fcf = None
+                notes.append(
+                    "REIT: GAAP EPS/FCF payout ratios omitted (depreciation compresses EPS and GAAP CapEx excludes property acquisitions; FFO/AFFO is industry standard)"
+                )
+            elif sector_group in ("bank", "insurance"):
+                roic = None
+                net_debt_to_fcf = None
+                fcf_margin = None
+                fcf_ex_sbc_margin = None
+                payout_ratio_fcf = None
+                if sector_group == "insurance":
+                    interest_coverage = None
+                notes.append(
+                    "Financials (bank/insurer): ROIC, Net Debt/FCF, and FCF ratios omitted as not meaningful for financial balance sheets"
+                )
+            elif sector_group == "asset_mgmt":
+                roic = None
+                net_debt_to_fcf = None
+                notes.append(
+                    "Financial / asset manager: ROIC and Net Debt/FCF omitted as not meaningful for financial balance sheets"
+                )
 
         # 5-year share count change (negative indicates net buybacks)
         # Prefer a consistent basis (diluted-to-diluted or outstanding-to-outstanding) anchored

@@ -33,6 +33,7 @@ from src.fundamentals import (
 )
 from src.identify import ResolvedHolding, is_non_common_ticker, resolve_all_filings
 from src.metrics import rebuild_quarter_prices, rebuild_stock_metrics
+from src.sectors import classify_sector_group, normalize_sic
 
 ETFS_CONFIG_PATH = CONFIG_DIR / "etfs.json"
 
@@ -430,18 +431,82 @@ def update_fundamentals(
     return ok_count, miss_count
 
 
+def update_sic_metadata(
+    conn: sqlite3.Connection,
+    client: EdgarClient,
+    offline_only: bool = False,
+) -> tuple[int, int]:
+    """Populate official SEC SIC code, description, and normalized sector_group from EDGAR submissions."""
+    conn.execute(
+        """
+        UPDATE securities
+        SET sic = NULL, sic_description = NULL, sector_group = NULL
+        WHERE cik IS NULL OR cik = ''
+        """
+    )
+
+    ciks = [
+        r["cik"]
+        for r in conn.execute(
+            """
+            SELECT DISTINCT cik
+            FROM securities
+            WHERE cik IS NOT NULL AND cik != ''
+            ORDER BY cik
+            """
+        ).fetchall()
+    ]
+
+    ok_count = 0
+    miss_count = 0
+    for idx, cik in enumerate(ciks, start=1):
+        try:
+            sub = client.get_submissions(cik, offline_only=offline_only)
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "HTTP 404" in msg or (offline_only and "offline mode" in msg):
+                miss_count += 1
+                continue
+            raise
+
+        sic = normalize_sic(sub.get("sic"))
+        sic_desc = str(sub.get("sicDescription") or "").strip() or None
+        group = classify_sector_group(sic, sic_desc)
+        conn.execute(
+            """
+            UPDATE securities
+            SET sic = ?, sic_description = ?, sector_group = ?
+            WHERE cik = ?
+            """,
+            (sic, sic_desc, group, cik),
+        )
+        ok_count += 1
+        if idx % 100 == 0 or idx == len(ciks):
+            conn.commit()
+            print(f"  SIC progress: {idx}/{len(ciks)} (ok={ok_count}, miss={miss_count})")
+
+    conn.commit()
+    return ok_count, miss_count
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build etf-xray SQLite DB and static JSON site")
     parser.add_argument("--skip-etf", action="store_true", help="Skip ETF holdings fetch/resolve")
     parser.add_argument("--skip-xbrl", action="store_true", help="Skip SEC XBRL fundamentals update")
     parser.add_argument("--offline", action="store_true", help="Use cached XBRL files only without network access")
     parser.add_argument("--only-export", action="store_true", help="Only rebuild metrics and export dist/data")
+    parser.add_argument("--only-sic", action="store_true", help="Only fetch/refresh SEC SIC sector metadata")
     args = parser.parse_args()
 
     conn = init_db(DB_PATH)
     client = EdgarClient()
 
     try:
+        if args.only_sic:
+            print("[SIC] Updating SEC SIC metadata from EDGAR submissions...")
+            ok_s, miss_s = update_sic_metadata(conn, client, offline_only=args.offline)
+            print(f"  SIC complete: ok={ok_s}, unavailable={miss_s}")
+            return 0
         if not args.only_export and not args.skip_etf:
             etf_cfgs = load_etf_configs()
             for cfg in etf_cfgs:
@@ -474,9 +539,11 @@ def main() -> int:
             conn.commit()
 
         if not args.only_export and not args.skip_xbrl:
-            print("[2/4] Updating SEC XBRL fundamentals...")
+            print("[2/4] Updating SEC XBRL fundamentals & SIC metadata...")
             ok_c, miss_c = update_fundamentals(conn, client, offline_only=args.offline)
             print(f"  XBRL complete: ok={ok_c}, unavailable={miss_c}")
+            ok_s, miss_s = update_sic_metadata(conn, client, offline_only=args.offline)
+            print(f"  SIC complete: ok={ok_s}, unavailable={miss_s}")
 
         print("[3/4] Computing quarter prices and stock metrics...")
         price_n = rebuild_quarter_prices(conn)

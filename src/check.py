@@ -387,6 +387,33 @@ def check_database(errors: list[str]) -> str:
                 f"[DB] ROE={roe_val} set despite non-positive TTM equity={eq_val} for {sec_id}"
             )
 
+        # Verify sector-specific accounting guards (REIT payout_ratio_eps; financial ROIC/NetDebt/FCF)
+        bad_reit_payout = conn.execute(
+            """
+            SELECT s.security_id, m.payout_ratio_eps
+            FROM securities s
+            JOIN stock_metrics m ON m.security_id = s.security_id
+            WHERE s.sector_group = 'reit'
+              AND (m.payout_ratio_eps IS NOT NULL OR m.payout_ratio_fcf IS NOT NULL)
+            """
+        ).fetchall()
+        for sec_id, pr in bad_reit_payout:
+            errors.append(f"[DB] REIT {sec_id} should omit GAAP payout ratios (payout_ratio_eps={pr})")
+
+        bad_fin_roic = conn.execute(
+            """
+            SELECT s.security_id, s.sector_group, m.roic, m.net_debt_to_fcf
+            FROM securities s
+            JOIN stock_metrics m ON m.security_id = s.security_id
+            WHERE s.sector_group IN ('bank', 'insurance', 'asset_mgmt')
+              AND (m.roic IS NOT NULL OR m.net_debt_to_fcf IS NOT NULL)
+            """
+        ).fetchall()
+        for sec_id, grp, rv, ndf in bad_fin_roic:
+            errors.append(
+                f"[DB] Financial ({grp}) {sec_id} should omit ROIC/NetDebt-to-FCF (roic={rv}, ndf={ndf})"
+            )
+
         sec_count = conn.execute("SELECT COUNT(*) FROM securities").fetchone()[0]
         ann_count = conn.execute("SELECT COUNT(*) FROM financials_annual").fetchone()[0]
         hold_count = conn.execute("SELECT COUNT(*) FROM etf_holdings").fetchone()[0]

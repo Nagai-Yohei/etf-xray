@@ -73,15 +73,18 @@ CREATE TABLE IF NOT EXISTS etf_changes (
 -- 2. Equity fundamentals layer
 -- ============================================================
 CREATE TABLE IF NOT EXISTS securities (
-    security_id   TEXT PRIMARY KEY,
-    ticker        TEXT,
-    name          TEXT NOT NULL,
-    cusip         TEXT,
-    isin          TEXT,
-    cik           TEXT,
-    ticker_source TEXT,
-    first_seen    TEXT,
-    last_seen     TEXT
+    security_id     TEXT PRIMARY KEY,
+    ticker          TEXT,
+    name            TEXT NOT NULL,
+    cusip           TEXT,
+    isin            TEXT,
+    cik             TEXT,
+    ticker_source   TEXT,
+    first_seen      TEXT,
+    last_seen       TEXT,
+    sic             TEXT,
+    sic_description TEXT,
+    sector_group    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_securities_ticker ON securities (ticker);
@@ -214,40 +217,45 @@ def init_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
     conn.executescript(SCHEMA_SQL)
 
     # Safely add any missing columns to an existing database
-    migrations: dict[str, tuple[str, ...]] = {
+    migrations: dict[str, tuple[tuple[str, str], ...]] = {
+        "securities": (
+            ("sic", "TEXT"),
+            ("sic_description", "TEXT"),
+            ("sector_group", "TEXT"),
+        ),
         "financials_annual": (
-            "gross_profit",
-            "pretax_income",
-            "rd_expense",
-            "sga_expense",
-            "interest_expense",
-            "income_tax",
-            "investing_cf",
-            "financing_cf",
-            "sbc",
-            "da_expense",
-            "current_assets",
-            "current_liabilities",
-            "goodwill",
-            "intangibles",
+            ("gross_profit", "REAL"),
+            ("pretax_income", "REAL"),
+            ("rd_expense", "REAL"),
+            ("sga_expense", "REAL"),
+            ("interest_expense", "REAL"),
+            ("income_tax", "REAL"),
+            ("investing_cf", "REAL"),
+            ("financing_cf", "REAL"),
+            ("sbc", "REAL"),
+            ("da_expense", "REAL"),
+            ("current_assets", "REAL"),
+            ("current_liabilities", "REAL"),
+            ("goodwill", "REAL"),
+            ("intangibles", "REAL"),
         ),
         "stock_metrics": (
-            "gross_margin",
-            "roic",
-            "fcf_ex_sbc_margin",
-            "net_debt_to_fcf",
-            "interest_coverage",
-            "current_ratio",
-            "share_change_5y",
+            ("gross_margin", "REAL"),
+            ("roic", "REAL"),
+            ("fcf_ex_sbc_margin", "REAL"),
+            ("net_debt_to_fcf", "REAL"),
+            ("interest_coverage", "REAL"),
+            ("current_ratio", "REAL"),
+            ("share_change_5y", "REAL"),
         ),
     }
     for table, cols in migrations.items():
         existing_cols = {
             row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
         }
-        for col_name in cols:
+        for col_name, col_type in cols:
             if col_name not in existing_cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} REAL")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
 
     conn.commit()
     return conn
