@@ -30,16 +30,20 @@ case "$CMD" in
   serve)
     exec "$PYTHON_BIN" -m src.serve "$@"
     ;;
+  deploy)
+    exec "$PYTHON_BIN" -m src.deploy "$@"
+    ;;
   *)
     cat <<'EOF'
 Usage: ./run.sh <command>
 
 Commands:
-  build      全データパイプラインを実行（ETF 取得 → XBRL → 指標計算 → dist/data 出力）
-  export     SQLite から dist/data のみ再出力
-  check      データ整合性検査 ＋ セキュリティ・情報流出スキャンを実行
-  init-db    SQLite データベース（data/market.db）を初期化
-  serve      ローカル確認用 HTTP サーバーを起動
+  build      Run full pipeline (fetch SEC filings -> XBRL -> metrics -> export dist/)
+  export     Re-export dist/ (web assets + split JSON) from existing SQLite DB
+  check      Run data integrity checks + secret/PII leak scan
+  init-db    Initialize local SQLite database (data/market.db)
+  serve      Start local HTTP server with production CSP headers
+  deploy     Upload dist/ to Cloudflare Pages via Direct Upload API
 EOF
     ;;
 esac

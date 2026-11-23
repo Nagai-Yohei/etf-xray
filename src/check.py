@@ -75,12 +75,12 @@ def _load_secret_values() -> list[str]:
         if val not in candidates:
             candidates.append(val)
 
-    for key in ("SEC_USER_AGENT", "OPENFIGI_API_KEY", "CLOUDFLARE_API_TOKEN", "GITHUB_TOKEN"):
+    for key in ("SEC_USER_AGENT", "OPENFIGI_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GITHUB_TOKEN"):
         if os.environ.get(key):
             add(os.environ[key])
 
     for key, val in parse_dotenv_file(ENV_PATH).items():
-        if key in ("SEC_USER_AGENT", "OPENFIGI_API_KEY", "CLOUDFLARE_API_TOKEN", "GITHUB_TOKEN"):
+        if key in ("SEC_USER_AGENT", "OPENFIGI_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GITHUB_TOKEN"):
             add(val)
 
     return candidates

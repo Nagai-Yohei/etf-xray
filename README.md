@@ -1,97 +1,116 @@
 # etf-xray
 
-100% 公開データ（**SEC EDGAR** + **OpenFIGI**）のみを用いて、米国 ETF の構成銘柄ヒストリーと個別株ファンダメンタルズ・配当指標を閲覧できる静的 Web サイトおよびビルドパイプラインです。
+A static web application and Python data pipeline for exploring U.S. ETF constituent histories and individual stock fundamentals/dividend metrics using **100% public data** (**SEC EDGAR** + **OpenFIGI**).
 
-- **UI 言語**: 英語（English）
-- **開発ドキュメント・コメント**: 日本語
-- **データソース**: SEC EDGAR（N-PORT-P / N-CSR / N-CSRS / N-Q / 10-K / 10-Q XBRL）および OpenFIGI（＋ `config/manual_tickers.csv`）
-- **フロントエンド**: 素の HTML / CSS / ES Modules JS ＋ ローカル同梱の Chart.js（Node.js / npm・外部 CDN 不使用）
+- **Live site**: https://etf-xray.pages.dev
+- **Covered ETFs**:
+  - **VYM** — Vanguard High Dividend Yield ETF (`2011-01` – present)
+  - **VOO** — Vanguard S&P 500 ETF (`2011-03` – present)
+  - **SCHD** — Schwab U.S. Dividend Equity ETF (`2011-11` – present)
+  - **HDV** — iShares Core High Dividend ETF (`2019-10` – present)
+- **Data sources**: SEC EDGAR (`N-PORT-P`, `N-CSR`, `N-CSRS`, `N-Q`, `10-K`, `10-Q` XBRL CompanyFacts) and OpenFIGI (+ curated `config/manual_tickers.csv`)
+- **Frontend**: Vanilla HTML / CSS / ES Modules JS + locally bundled Chart.js (zero Node.js/npm dependencies, zero external CDNs, strict CSP)
 
 ---
 
-## 1. 環境構築
+## Architecture
 
-前提: **Python 3.10+** および **Git**
+```mermaid
+flowchart LR
+    SEC["SEC EDGAR\n(N-PORT / N-Q / N-CSR / XBRL)"] --> PY["Python Pipeline\n(src/)"]
+    FIGI["OpenFIGI\n(CUSIP/ISIN -> Ticker)"] --> PY
+    CFG["config/\netfs.json, manual_tickers.csv"] --> PY
+    PY --> DB[("SQLite\ndata/market.db\n(local only)")]
+    DB --> EXP["src/export_site.py\nSplit JSON"]
+    WEB["web/\nHTML / CSS / JS / vendor"] --> DIST["dist/\nStatic Site"]
+    EXP --> DIST
+    DIST --> CHK["src/check.py\nIntegrity + Leak Scan"]
+    CHK --> CF["Cloudflare Pages\n(Static Hosting)"]
+```
+
+- **Two-layer SQLite model (`data/market.db`, gitignored)**:
+  - **ETF layer**: `etfs`, `etf_dates`, `etf_holdings`, `etf_changes`
+  - **Equity layer**: `securities`, `quarter_prices` (implied from `value_usd / shares`), `financials_annual`, `financials_quarterly`, `financials_ttm`, `stock_metrics`
+- **Split static JSON (`dist/data/`, gitignored)**:
+  - `meta.json`, `etf/<ETF_ID>/summary.json`, `etf/<ETF_ID>/holdings/<AS_OF>.json`, `stocks/index.json`, and on-demand `stocks/<SECURITY_ID>.json`
+
+---
+
+## Quick Start
+
+**Prerequisites**: Python 3.10+ and Git (no Node.js required).
 
 ```bash
-# 仮想環境の作成と最小依存（requests, lxml）のインストール
-python3.12 -m venv .venv
+# 1. Create virtual environment and install minimal dependencies
+python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# 流出防止 pre-commit フックの有効化
+# 2. Enable the secret/PII leak-prevention pre-commit hook
 git config core.hooksPath scripts
 
-# ローカル環境変数ファイルの作成（.gitignore 除外済み）
+# 3. Create your local .env file (excluded by .gitignore)
 cp .env.example .env
 ```
 
-`.env` を開き、`SEC_USER_AGENT` にご自身の識別名と連絡先メールアドレスを設定してください（SEC EDGAR の利用要件）。  
-※ `.env` は絶対に Git へコミットしないでください。
+Open `.env` and set `SEC_USER_AGENT` to your own app/name and contact email as required by SEC EDGAR fair-access guidelines. Never commit `.env`.
 
 ---
 
-## 2. ビルド・検査・ローカル確認
+## Usage
 
 ```bash
-# 全データ取得 → SQLite 構築（data/market.db）→ 静的サイト出力（dist/）
+# Full pipeline: fetch SEC filings -> extract XBRL -> compute metrics -> build dist/
 ./run.sh build
 
-# キャッシュ済み XBRL のみで高速再ビルド（オフライン）
+# Fast offline rebuild from local cache (skip ETF re-fetch)
 ./run.sh build --skip-etf --offline
 
-# SQLite から dist/（HTML/CSS/JS + 分割 JSON）のみ再出力
+# Re-export dist/ (static assets + split JSON) from existing SQLite DB
 ./run.sh export
 
-# データ整合性検査 ＋ 秘密情報・個人情報流出スキャン（必須）
+# Run data integrity checks + secret/PII leak scan (required before commit/deploy)
 ./run.sh check
 
-# ローカル確認用サーバー起動（本番と同一の厳格 CSP ヘッダを付与）
+# Serve dist/ locally with production CSP headers (http://127.0.0.1:8787/)
 ./run.sh serve
-# → http://127.0.0.1:8787/
+
+# Deploy dist/ directly to Cloudflare Pages via Direct Upload API (requires token in .env)
+./run.sh deploy
 ```
 
 ---
 
-## 3. Cloudflare Pages への公開手順（Direct Upload）
+## Deploying to Cloudflare Pages
 
-本リポジトリは `data/`（SQLite DB・生キャッシュ）と `.env` を Git 除外しています。  
-公開時は、ローカルで **`./run.sh check` がすべて OK** になった **`dist/` フォルダのみ** をアップロードします。
+Only the built `dist/` directory is published (`data/` and `.env` are gitignored and never uploaded).
 
-### 方法 A: Cloudflare ダッシュボードからアップロード（最も手軽）
-
-1. ローカルで `./run.sh check` を実行し、`CHECK OK` を確認する。
-2. Cloudflare ダッシュボード → **Workers & Pages** → **Create** → **Pages** → **Direct Upload** を選択する。
-3. 任意の **Project name**（英小文字・数字・ハイフン、例: `etf-xray`）を入力する。  
-   → 自動的に `https://<project-name>.pages.dev` が発行されます。
-4. ローカルの **`dist/` フォルダ** をドラッグ＆ドロップして **Deploy site** を押す。
-5. （任意）独自ドメインを使う場合は、プロジェクト設定の **Custom domains** から取得済みドメインを追加する。
-
-### 方法 B: Wrangler CLI でデプロイ（2 回目以降の更新に便利）
-
-```bash
-./run.sh check
-npx wrangler pages deploy dist --project-name <your-project-name>
-```
-
-> **テスト公開時に検索エンジンへ掲載したくない場合**  
-> `web/robots.txt` に `User-agent: *` と `Disallow: /` を記述して `./run.sh export` → `./run.sh check` 後にデプロイしてください。
+- **Option A — Direct Upload via Python (`./run.sh deploy`)**:
+  Create a scoped Cloudflare API token with only **Account → Cloudflare Pages: Edit**, set `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_PAGES_PROJECT` in `.env`, then run `./run.sh deploy`. It runs `./run.sh check` automatically and uploads only changed files using differential content hashing.
+- **Option B — Cloudflare Dashboard**:
+  Run `./run.sh check`, then drag and drop the `dist/` folder into **Workers & Pages → Direct Upload**.
 
 ---
 
-## 4. ディレクトリ概要
+## Directory Structure
 
-| パス | 役割 |
-|---|---|
-| `config/` | 対象 ETF 定義（`etfs.json`）・手動ティッカー対応表（`manual_tickers.csv`） |
-| `src/` | EDGAR 取得・HTML/XML アダプタ・名寄せ・XBRL 抽出・指標計算・JSON 出力・検証 |
-| `web/` | 静的 Web UI（HTML / CSS / ES Modules JS / `_headers` / 同梱 `vendor/chart.umd.min.js`） |
-| `scripts/pre-commit` | 秘密情報・個人情報・禁止ファイルのコミット阻止フック |
-| `data/` | **[Git 除外]** EDGAR / OpenFIGI キャッシュおよび SQLite DB（`market.db`） |
-| `dist/` | **[Git 除外]** 公開用完成ディレクトリ（`web/` + 生成 JSON） |
+| Path | Purpose |
+| :--- | :--- |
+| `config/` | Target ETF definitions (`etfs.json`) and curated ticker overrides (`manual_tickers.csv`) |
+| `src/` | EDGAR client, `N-PORT-P` / Schwab / Vanguard legacy adapters, entity resolution, XBRL extraction, metrics, static export, integrity checks, local server, and Cloudflare deployer |
+| `web/` | Static frontend (HTML / CSS / ES Modules JS, `_headers` CSP rules, locally bundled `vendor/chart.umd.min.js`) |
+| `scripts/pre-commit` | Git hook blocking secrets, personal info, and ignored artifacts from being committed |
+| `data/` | *[Gitignored]* Cached SEC/OpenFIGI responses and local SQLite database (`market.db`) |
+| `dist/` | *[Gitignored]* Final deployable static site (`web/` + generated JSON) |
 
 ---
 
-## 5. 免責・出典
+## Security & Privacy
 
-本サイトの数値はすべて SEC EDGAR の公開提出書類および OpenFIGI の公開データから機械的に集計しています。  
-四半期末株価は保有 ETF の評価額 ÷ 保有株数から算出した推計値です。情報提供のみを目的としており、投資助言ではありません。
+- **Zero secrets in Git or `dist/`**: `.gitignore`, `scripts/pre-commit`, and `src/check.py` scan tracked files and generated build artifacts for API tokens, private keys, personal emails, and local filesystem paths.
+- **Strict frontend hardening**: Vanilla JS using `textContent` / safe DOM builders only (no `innerHTML` / `outerHTML` / `insertAdjacentHTML`), no external CDN scripts, and a strict `Content-Security-Policy` in `web/_headers`.
+
+---
+
+## Data Sources & Disclaimer
+
+All figures are programmatically compiled from public SEC EDGAR filings and OpenFIGI metadata. Quarter-end share prices are implied from reported ETF holding market values divided by share counts (`value_usd / shares`). This project is for informational purposes only and does not constitute investment advice.
