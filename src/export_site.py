@@ -410,6 +410,13 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                 "dps_ttm": t_clean.get("dps_ttm"),
             }
 
+            hist_by_etf = etf_hist_by_sec.get(sec_id, {})
+            all_hist_dates = sorted(
+                {row["as_of"] for rows in hist_by_etf.values() for row in rows}
+            )
+            eff_first_seen = all_hist_dates[0] if all_hist_dates else s["first_seen"]
+            eff_last_seen = all_hist_dates[-1] if all_hist_dates else s["last_seen"]
+
             _write_json(
                 data_dir / "stocks" / f"{sec_id}.json",
                 {
@@ -419,15 +426,15 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     "cusip": s["cusip"],
                     "isin": s["isin"],
                     "cik": s["cik"],
-                    "first_seen": s["first_seen"],
-                    "last_seen": s["last_seen"],
+                    "first_seen": eff_first_seen,
+                    "last_seen": eff_last_seen,
                     "current_etfs": active_etfs,
                     "metrics": m_clean,
                     "ttm": t_clean or None,
                     "annual": annual_by_sec.get(sec_id, []),
                     "quarterly": quarterly_by_sec.get(sec_id, []),
                     "prices": prices_by_sec.get(sec_id, []),
-                    "etf_history": etf_hist_by_sec.get(sec_id, {}),
+                    "etf_history": hist_by_etf,
                 },
             )
             stock_file_count += 1

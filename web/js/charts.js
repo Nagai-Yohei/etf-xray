@@ -74,8 +74,12 @@ export function fmtAxisPct(value) {
 export function fmtAxisUsdB(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
+  const abs = Math.abs(num);
   const sign = num < 0 ? "-" : "";
-  return `${sign}$${fmtAxisNum(Math.abs(num), 2)}B`;
+  if (abs > 0 && abs < 0.01) {
+    return `${sign}$${fmtAxisNum(abs * 1000, 1)}M`;
+  }
+  return `${sign}$${fmtAxisNum(abs, 2)}B`;
 }
 
 export function fmtAxisUsdM(value) {
@@ -165,6 +169,19 @@ export function baseChartOptions(yTickFormatter, rightYTickFormatter = null, ext
         padding: 10,
         cornerRadius: 6,
         ...(extra.tooltip || {}),
+        callbacks: {
+          label: (ctx) => {
+            const raw = ctx.parsed?.y;
+            if (raw === null || raw === undefined || !Number.isFinite(raw)) return null;
+            const fmt =
+              ctx.dataset?.yAxisID === "y1" && rightYTickFormatter
+                ? rightYTickFormatter
+                : yTickFormatter;
+            const formatted = fmt ? fmt(raw) : fmtAxisNum(raw, 2);
+            return ` ${ctx.dataset.label || ""}: ${formatted}`;
+          },
+          ...(extra.tooltip?.callbacks || {}),
+        },
       },
     },
     scales,

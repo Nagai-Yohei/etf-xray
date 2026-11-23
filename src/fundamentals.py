@@ -263,11 +263,11 @@ TAG_MAP_FLOW_USD: dict[str, list[tuple[str, str]]] = {
         ("us-gaap", "PaymentsOfDividendsCommonStock"),
         ("us-gaap", "PaymentsOfDividends"),
         ("us-gaap", "PaymentsOfOrdinaryDividends"),
-        ("us-gaap", "DividendsCommonStockCash"),
-        ("us-gaap", "DividendsCash"),
         ("us-gaap", "PaymentsOfCapitalDistribution"),
         ("us-gaap", "PartnersCapitalAccountDistributions"),
         ("ifrs-full", "DividendsPaidClassifiedAsFinancingActivities"),
+        ("us-gaap", "DividendsCommonStockCash"),
+        ("us-gaap", "DividendsCash"),
     ],
     "buybacks": [
         ("us-gaap", "PaymentsForRepurchaseOfCommonStock"),
@@ -1201,6 +1201,31 @@ def extract_annual_financials(
             for r in rows:
                 if r[field] is not None and r[field] > 0:
                     r[field] = _fix_share_scale(r[field], med)
+
+    # Guard against stale iXBRL footnote copy-paste where a prior year's special dividend is re-tagged
+    # verbatim under the next fiscal year despite cash flow dividend payments collapsing (e.g. ACGL FY2025)
+    for i in range(1, len(rows)):
+        prev_r = rows[i - 1]
+        cur_r = rows[i]
+        cur_d = cur_r.get("dps_declared")
+        prev_d = prev_r.get("dps_declared")
+        if (
+            cur_d is not None
+            and cur_d > 0.50
+            and cur_r.get("dps_paid") is None
+            and prev_d is not None
+            and prev_d > 0.50
+            and abs(cur_d - prev_d) <= max(0.01, prev_d * 0.01)
+        ):
+            prev_sh = max(prev_r.get("shares_diluted") or 0.0, prev_r.get("shares_outstanding") or 0.0)
+            cur_sh = max(cur_r.get("shares_diluted") or 0.0, cur_r.get("shares_outstanding") or 0.0)
+            prev_dp = prev_r.get("dividends_paid")
+            cur_dp = cur_r.get("dividends_paid")
+            if prev_dp is not None and prev_sh > 0 and cur_dp is not None and cur_sh > 0:
+                prev_est = prev_dp / prev_sh
+                cur_est = cur_dp / cur_sh
+                if 0.5 * prev_d <= prev_est <= 1.5 * prev_d and cur_est < cur_d * 0.05:
+                    cur_r["dps_declared"] = None
 
     return rows, split_events
 

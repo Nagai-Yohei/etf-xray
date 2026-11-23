@@ -113,6 +113,7 @@ let stocksList = [];
 let currentEtfId = "SCHD";
 let lastBackTarget = null;
 let cleanupView = null;
+let routeSeq = 0;
 
 function navigate(hash) {
   if (window.location.hash === hash) {
@@ -164,7 +165,13 @@ function setupGlobalSearch() {
 
         const yieldText =
           s.ttm_yield !== null && s.ttm_yield !== undefined
-            ? el("span", { className: "num text-muted", text: fmtPct(s.ttm_yield, 2) })
+            ? el("span", {
+                className: "num text-muted",
+                text: `Yield ${fmtPct(s.ttm_yield, 2)}`,
+                title: s.latest_price_date
+                  ? `TTM dividend yield based on implied price as of ${s.latest_price_date}`
+                  : "TTM dividend yield",
+              })
             : null;
 
         searchDropdown.appendChild(
@@ -214,6 +221,9 @@ function setupGlobalSearch() {
 }
 
 async function handleRoute() {
+  const mySeq = ++routeSeq;
+  const isStale = () => mySeq !== routeSeq;
+
   if (typeof cleanupView === "function") {
     cleanupView();
     cleanupView = null;
@@ -225,12 +235,18 @@ async function handleRoute() {
   const params = new URLSearchParams(queryPart || "");
 
   try {
+    let nextCleanup = null;
     if (parts.length === 0) {
       etfSwitcher.value = "";
       lastBackTarget = { href: "#/", label: "← Back to Home" };
       setTopbarContext(null);
       document.title = "ETF X-Ray — U.S. ETF Holdings & SEC Fundamentals";
-      cleanupView = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      nextCleanup = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      if (isStale()) {
+        if (typeof nextCleanup === "function") nextCleanup();
+        return;
+      }
+      cleanupView = nextCleanup;
       window.scrollTo({ top: 0 });
     } else if (parts[0] === "stock" && parts[1]) {
       const secId = decodeURIComponent(parts[1]);
@@ -240,8 +256,10 @@ async function handleRoute() {
         currentEtfId,
         setTopbarContext,
         metaData?.etfs || [],
-        lastBackTarget
+        lastBackTarget,
+        isStale
       );
+      if (isStale()) return;
       window.scrollTo({ top: 0 });
     } else if (parts[0] === "etf") {
       const etfId = parts[1] ? decodeURIComponent(parts[1]) : currentEtfId;
@@ -258,30 +276,43 @@ async function handleRoute() {
       };
       setTopbarContext(null);
       document.title = `${targetEtf} — ETF X-Ray`;
-      cleanupView = await renderEtfView(
+      nextCleanup = await renderEtfView(
         rootEl,
         targetEtf,
         requestedAsOf,
         navigate,
         (asOf, isLatest) => {
+          if (isStale()) return;
           lastBackTarget = {
             href: isLatest
               ? `#/etf/${encodeURIComponent(targetEtf)}`
               : `#/etf/${encodeURIComponent(targetEtf)}?as_of=${encodeURIComponent(asOf)}`,
             label: isLatest ? `← Back to ${targetEtf}` : `← Back to ${targetEtf} (${asOf})`,
           };
-        }
+        },
+        isStale
       );
+      if (isStale()) {
+        if (typeof nextCleanup === "function") nextCleanup();
+        return;
+      }
+      cleanupView = nextCleanup;
     } else {
       etfSwitcher.value = "";
       lastBackTarget = { href: "#/", label: "← Back to Home" };
       setTopbarContext(null);
       document.title = "ETF X-Ray — U.S. ETF Holdings & SEC Fundamentals";
-      cleanupView = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      nextCleanup = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      if (isStale()) {
+        if (typeof nextCleanup === "function") nextCleanup();
+        return;
+      }
+      cleanupView = nextCleanup;
       window.scrollTo({ top: 0 });
     }
     scheduleStickySync();
   } catch (err) {
+    if (isStale()) return;
     setTopbarContext(null);
     clearNode(rootEl);
     rootEl.appendChild(
@@ -322,10 +353,20 @@ async function init() {
 
     if (footerEl && meta.disclaimer) {
       clearNode(footerEl);
+      const updatedDate = meta.generated_at ? String(meta.generated_at).slice(0, 10) : null;
       footerEl.appendChild(
         el("p", {
           className: "footer-note",
-          text: meta.disclaimer,
+          text: updatedDate ? `${meta.disclaimer} Last updated ${updatedDate} UTC.` : meta.disclaimer,
+        })
+      );
+      footerEl.appendChild(
+        el("p", {
+          className: "footer-glossary",
+          text:
+            "Glossary: TTM = trailing twelve months · DPS = dividends per share · SBC = stock-based compensation · " +
+            "Adj. FCF = FCF − SBC · QoQ = quarter-over-quarter weight change (percentage points) · " +
+            "Div Streak = consecutive years without a dividend cut (+ indicates ongoing since earliest XBRL filing).",
         })
       );
     }

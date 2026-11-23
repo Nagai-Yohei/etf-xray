@@ -59,7 +59,7 @@ export function el(tag, props = {}, children = []) {
 }
 
 export function fmtUsdCompact(val) {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) {
     return "—";
   }
   const num = Number(val);
@@ -73,14 +73,16 @@ export function fmtUsdCompact(val) {
 }
 
 export function fmtPrice(val) {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) {
     return "—";
   }
-  return `$${Number(val).toFixed(2)}`;
+  const num = Number(val);
+  const sign = num < 0 ? "-" : "";
+  return `${sign}$${Math.abs(num).toFixed(2)}`;
 }
 
 export function fmtPct(val, digits = 1, signed = false) {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) {
     return "—";
   }
   const pct = Number(val) * 100;
@@ -89,7 +91,7 @@ export function fmtPct(val, digits = 1, signed = false) {
 }
 
 export function fmtPctPoints(val, digits = 2) {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) {
     return "—";
   }
   const pct = Number(val) * 100;
@@ -98,28 +100,30 @@ export function fmtPctPoints(val, digits = 2) {
 }
 
 export function fmtMultiple(val, suffix = "x") {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) {
     return "—";
   }
   return `${Number(val).toFixed(1)}${suffix}`;
 }
 
 export function fmtPerShare(val) {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) {
     return "—";
   }
-  return `$${Number(val).toFixed(2)}`;
+  const num = Number(val);
+  const sign = num < 0 ? "-" : "";
+  return `${sign}$${Math.abs(num).toFixed(2)}`;
 }
 
 export function fmtInt(val) {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) {
     return "—";
   }
   return Math.round(Number(val)).toLocaleString("en-US");
 }
 
 export function fmtStreak(years, isOpen) {
-  if (years === null || years === undefined) {
+  if (years === null || years === undefined || !Number.isFinite(Number(years))) {
     return "—";
   }
   return `${years}${isOpen ? "+" : ""} yrs`;

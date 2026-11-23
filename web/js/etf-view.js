@@ -33,7 +33,7 @@ const STORAGE_KEY_COLS = "etf_xray_visible_cols_v1";
 
 // Customizable metric column definitions
 const OPTIONAL_COLUMNS = [
-  { key: "price", label: "Price", group: "Valuation", get: (r) => r.price, fmt: (v) => fmtPrice(v) },
+  { key: "price", label: "Implied Price", group: "Valuation", get: (r) => r.price, fmt: (v) => fmtPrice(v) },
   { key: "ttm_yield", label: "TTM Yield", group: "Dividend", get: (r) => r.m?.ttm_yield, fmt: (v) => fmtPct(v, 2) },
   { key: "div_streak_years", label: "Div Streak", group: "Dividend", get: (r) => r.m?.div_streak_years, fmt: (v, r) => fmtStreak(v, r.m?.div_streak_open) },
   { key: "div_cagr_5y", label: "5Y Div CAGR", group: "Dividend", get: (r) => r.m?.div_cagr_5y, fmt: (v) => fmtPct(v, 1, true) },
@@ -98,7 +98,14 @@ function detectActivePreset(colSet) {
   return null;
 }
 
-export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateChange = null) {
+export async function renderEtfView(
+  root,
+  etfId,
+  initialAsOf,
+  navigate,
+  onDateChange = null,
+  isStale = () => false
+) {
   destroyAllCharts();
   clearNode(root);
   root.appendChild(el("div", { className: "loading-box", text: `Loading ${etfId} holdings...` }));
@@ -107,6 +114,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
     getEtfSummary(etfId),
     getStocksIndex(),
   ]);
+  if (isStale()) return null;
 
   const dateList = summary.dates.map((d) => d.as_of);
   let selectedAsOf =
@@ -192,12 +200,17 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
     );
   }
 
+  let dateReqSeq = 0;
+
   async function selectDate(asOf, scrollToSnapshot = false) {
+    const reqId = ++dateReqSeq;
     selectedAsOf = asOf;
     if (typeof onDateChange === "function") {
       onDateChange(selectedAsOf, selectedAsOf === summary.latest_as_of);
     }
-    state.holdingsData = await getEtfHoldings(etfId, asOf);
+    const nextHoldings = await getEtfHoldings(etfId, asOf);
+    if (isStale() || reqId !== dateReqSeq) return;
+    state.holdingsData = nextHoldings;
     renderSnapshotHeader();
     renderKpis();
     renderHoldingsCard();
@@ -243,11 +256,17 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
       },
     });
 
+    const dMeta = dateMetaMap.get(selectedAsOf);
+    const sourceBadge = dMeta?.source
+      ? el("span", { className: "badge badge-slate", text: `Source: ${dMeta.source}` })
+      : null;
+
     snapshotHeader.appendChild(
       el("div", { className: "zone-header" }, [
         el("div", { className: "zone-title-wrap" }, [
           el("h2", { className: "zone-title", text: "Quarter Snapshot" }),
           el("span", { className: "badge badge-blue", text: `As of ${selectedAsOf}` }),
+          sourceBadge,
         ]),
         el("div", { className: "date-nav" }, [prevBtn, dateSelect, nextBtn]),
       ])
@@ -262,6 +281,11 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
 
     const estYield = dMeta?.est_yield ?? null;
     const estDiv = dMeta?.est_annual_dividends_usd ?? null;
+    const divCov = dMeta?.div_coverage_weight ?? null;
+
+    const estDivSubParts = [];
+    if (estDiv != null) estDivSubParts.push(`Est. annual dividends: ${fmtUsdCompact(estDiv)}`);
+    if (divCov != null) estDivSubParts.push(`Dividend data covers ${fmtPct(divCov, 0)} of weight`);
 
     const cards = [
       {
@@ -288,7 +312,7 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
       {
         label: "Est. Portfolio Yield",
         value: fmtPct(estYield, 2),
-        sub: estDiv != null ? `Est. annual dividends: ${fmtUsdCompact(estDiv)}` : "Estimated annual yield",
+        sub: estDivSubParts.length > 0 ? estDivSubParts.join(" · ") : "Estimated look-through yield",
       },
     ];
 
@@ -408,7 +432,9 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
       className: `col-popover${state.popoverOpen ? "" : " hidden"}`,
     });
     for (const groupName of ["Dividend", "Valuation", "Fundamentals"]) {
-      colPopover.appendChild(el("div", { className: "col-popover-title", text: groupName }));
+      colPopover.appendChild(
+        el("div", { className: "col-popover-title", text: `${groupName} (latest SEC)` })
+      );
       const grid = el("div", { className: "col-check-grid" });
       for (const col of OPTIONAL_COLUMNS.filter((c) => c.group === groupName)) {
         const checkbox = el("input", {
@@ -486,6 +512,19 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
         el("div", { className: "toolbar-group" }, [filterInput, newOnlyBtn, expandBtn]),
       ])
     );
+
+    const hasNonPriceOptCol = activeOptCols.some((c) => c.key !== "price");
+    if (hasNonPriceOptCol && selectedAsOf !== summary.latest_as_of) {
+      tableCard.appendChild(
+        el("div", {
+          className: "table-note-bar",
+          text:
+            "Weight, QoQ, and Implied Price are as of the selected quarter (" +
+            selectedAsOf +
+            "). Fundamental columns (Yield, P/E, Streak, Margins) show each company's latest available SEC figures, not historical values as of that quarter.",
+        })
+      );
+    }
 
     // Table body
     const theadRow = el("tr", {}, [
@@ -586,22 +625,31 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
             href: `#/stock/${encodeURIComponent(item.security_id)}`,
             className: `change-chip ${kind === "add" ? "change-chip-add" : "change-chip-remove"}`,
             title: item.name,
-            text: `${item.ticker || item.security_id} (${fmtPct(item.weight, 2)})`,
+            text:
+              kind === "remove"
+                ? `${item.ticker || item.security_id} (was ${fmtPct(item.weight, 2)})`
+                : `${item.ticker || item.security_id} (${fmtPct(item.weight, 2)})`,
           })
         )
       );
     };
 
     changesCard.appendChild(
-      el("div", { className: "card-body changes-grid" }, [
-        el("div", {}, [
-          el("div", { className: "kpi-label", text: `Added (${ch.added.length})` }),
-          makeChips(ch.added, "add"),
+      el("div", { className: "card-body" }, [
+        el("div", { className: "changes-grid" }, [
+          el("div", {}, [
+            el("div", { className: "kpi-label", text: `Added (${ch.added.length})` }),
+            makeChips(ch.added, "add"),
+          ]),
+          el("div", {}, [
+            el("div", { className: "kpi-label", text: `Removed (${ch.removed.length})` }),
+            makeChips(ch.removed, "remove"),
+          ]),
         ]),
-        el("div", {}, [
-          el("div", { className: "kpi-label", text: `Removed (${ch.removed.length})` }),
-          makeChips(ch.removed, "remove"),
-        ]),
+        el("p", {
+          className: "section-note",
+          text: "Added weights are as of this quarter; Removed weights are as of the prior quarter, before removal.",
+        }),
       ])
     );
   }
@@ -646,7 +694,16 @@ export async function renderEtfView(root, etfId, initialAsOf, navigate, onDateCh
       ])
     );
     dividendChartCard.appendChild(
-      el("div", { className: "card-body" }, [el("div", { className: "chart-box" }, [canvas])])
+      el("div", { className: "card-body" }, [
+        el("div", { className: "chart-box" }, [canvas]),
+        el("p", {
+          className: "section-note",
+          text:
+            "Estimated by summing each holding's split-adjusted DPS as of that date × shares held, divided by total equity value. " +
+            "Holdings without SEC dividend data are treated as zero (coverage shown in KPI above); this is not the fund's SEC distribution yield. " +
+            "Bars are plotted at equal spacing even where a historical quarter has no public SEC filing (e.g. 2019 N-Q → N-PORT transition).",
+        }),
+      ])
     );
 
     const labels = summary.dates.map((d) => d.as_of.slice(0, 7));

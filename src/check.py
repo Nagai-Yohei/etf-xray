@@ -353,6 +353,40 @@ def check_database(errors: list[str]) -> str:
                 f"[DB] Non-common/legacy security {sec_id} has common-stock metrics (yield={yld}, pe={pe})"
             )
 
+        # Verify securities.first_seen / last_seen strictly match etf_holdings min/max dates
+        bad_seen = conn.execute(
+            """
+            SELECT s.security_id, s.first_seen, h.min_d, s.last_seen, h.max_d
+            FROM securities s
+            JOIN (
+                SELECT security_id, MIN(as_of) AS min_d, MAX(as_of) AS max_d
+                FROM etf_holdings
+                GROUP BY security_id
+            ) h ON h.security_id = s.security_id
+            WHERE s.first_seen != h.min_d OR s.last_seen != h.max_d
+            """
+        ).fetchall()
+        for sec_id, fs, min_d, ls, max_d in bad_seen:
+            errors.append(
+                f"[DB] first_seen/last_seen mismatch for {sec_id}: "
+                f"({fs}..{ls}) != holdings ({min_d}..{max_d})"
+            )
+
+        # Verify negative latest TTM equity securities do not carry a distorted ROE
+        bad_neg_eq_roe = conn.execute(
+            """
+            SELECT m.security_id, m.roe, t.total_equity
+            FROM stock_metrics m
+            JOIN financials_ttm t ON t.security_id = m.security_id
+            WHERE t.total_equity IS NOT NULL AND t.total_equity <= 0
+              AND m.roe IS NOT NULL
+            """
+        ).fetchall()
+        for sec_id, roe_val, eq_val in bad_neg_eq_roe:
+            errors.append(
+                f"[DB] ROE={roe_val} set despite non-positive TTM equity={eq_val} for {sec_id}"
+            )
+
         sec_count = conn.execute("SELECT COUNT(*) FROM securities").fetchone()[0]
         ann_count = conn.execute("SELECT COUNT(*) FROM financials_annual").fetchone()[0]
         hold_count = conn.execute("SELECT COUNT(*) FROM etf_holdings").fetchone()[0]
@@ -382,8 +416,25 @@ def check_dist_json(errors: list[str]) -> str:
             if isinstance(idx_data, dict):
                 stocks_dir = stocks_index_path.parent
                 for sec_id in idx_data:
-                    if not (stocks_dir / f"{sec_id}.json").is_file():
+                    stock_path = stocks_dir / f"{sec_id}.json"
+                    if not stock_path.is_file():
                         errors.append(f"[DIST] Missing stock detail JSON for {sec_id}")
+                        continue
+                    try:
+                        s_doc = json.loads(stock_path.read_text(encoding="utf-8"))
+                        hist = s_doc.get("etf_history") or {}
+                        h_dates = sorted(
+                            {r["as_of"] for rows in hist.values() for r in rows}
+                        )
+                        if h_dates and (
+                            s_doc.get("first_seen") != h_dates[0]
+                            or s_doc.get("last_seen") != h_dates[-1]
+                        ):
+                            errors.append(
+                                f"[DIST] first_seen/last_seen mismatch in {sec_id}.json"
+                            )
+                    except Exception:  # noqa: BLE001
+                        pass
         except Exception:  # noqa: BLE001
             pass
 

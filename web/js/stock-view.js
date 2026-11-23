@@ -49,7 +49,7 @@ function hasAnyValue(arr) {
 }
 
 function fmtSharesM(val) {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) return "—";
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) return "—";
   return `${(Number(val) / 1e6).toFixed(1)}M`;
 }
 
@@ -115,13 +115,15 @@ export async function renderStockView(
   fallbackEtfId,
   setTopbarContext = null,
   etfMetaList = [],
-  backTarget = null
+  backTarget = null,
+  isStale = () => false
 ) {
   destroyAllCharts();
   clearNode(root);
   root.appendChild(el("div", { className: "loading-box", text: `Loading ${securityId}...` }));
 
   const detail = await getStockDetail(securityId);
+  if (isStale()) return;
   const m = detail.metrics || {};
   const ttm = detail.ttm || {};
   const annual = detail.annual || [];
@@ -243,37 +245,55 @@ export async function renderStockView(
     ])
   );
 
+  // Former holding freshness banner
+  const isFormer = !detail.current_etfs || detail.current_etfs.length === 0;
+  if (isFormer && detail.last_seen) {
+    const staleNote =
+      m.data_notes && /predates/i.test(m.data_notes)
+        ? " Price-based ratios (Yield, P/E, P/B) are omitted because the last implied price predates the latest SEC filings."
+        : " Price-based metrics reflect the implied price from that reporting date, not a current market value.";
+    root.appendChild(
+      el("div", {
+        className: "info-banner",
+        text: `Former holding — last held as of ${detail.last_seen}.${staleNote}`,
+      })
+    );
+  }
+
   // 3. Summary KPI cards (8 cards)
+  const ttmTag = ttm.period_end ? ` · TTM to ${ttm.period_end}` : "";
+  const fyTag = latestAnn?.fy_end ? `FY${latestAnn.fy_end.slice(0, 4)} basis` : "Latest fiscal year basis";
   const kpis = [
     {
       label: "TTM Dividend Yield",
       value: fmtPct(m.ttm_yield, 2),
-      sub: `TTM DPS: ${fmtPerShare(ttm.dps_ttm)}`,
+      sub: `TTM DPS: ${fmtPerShare(ttm.dps_ttm)}${ttmTag}`,
     },
     {
       label: "P/E (TTM) / P/B",
       value: `${fmtMultiple(m.pe_ratio)} / ${fmtMultiple(m.pb_ratio)}`,
-      sub: `TTM EPS: ${fmtPerShare(ttm.eps_ttm)}`,
+      sub: `TTM EPS: ${fmtPerShare(ttm.eps_ttm)}${ttmTag}`,
     },
     {
       label: "Div Streak / 5Y CAGR",
       value: `${fmtStreak(m.div_streak_years, m.div_streak_open)}`,
-      sub: `5Y: ${fmtPct(m.div_cagr_5y, 1, true)} · 10Y: ${fmtPct(m.div_cagr_10y, 1, true)}`,
+      sub: `5Y: ${fmtPct(m.div_cagr_5y, 1, true)} · 10Y: ${fmtPct(m.div_cagr_10y, 1, true)} (no-cut yrs)`,
+      title: "Consecutive fiscal years without a dividend cut (not necessarily increases). '+' indicates ongoing since earliest available XBRL filing.",
     },
     {
       label: "Payout (EPS / FCF)",
-      value: `${fmtPct(m.payout_ratio_eps, 0)} / ${fmtPct(m.payout_ratio_fcf, 0)}`,
-      sub: "Same fiscal year basis",
+      value: `${fmtPct(m.payout_ratio_eps, 1)} / ${fmtPct(m.payout_ratio_fcf, 1)}`,
+      sub: fyTag,
     },
     {
       label: hasOpIncome ? "Gross / Op. Margin" : "Gross / Pretax Margin",
       value: `${fmtPct(m.gross_margin, 1)} / ${fmtPct(latestProfitMargin, 1)}`,
-      sub: `5Y Rev CAGR: ${fmtPct(m.rev_cagr_5y, 1, true)}`,
+      sub: `${fyTag} · 5Y Rev CAGR: ${fmtPct(m.rev_cagr_5y, 1, true)}`,
     },
     {
       label: "ROIC / ROE",
       value: `${fmtPct(m.roic, 1)} / ${fmtPct(m.roe, 1)}`,
-      sub: `Equity Ratio: ${fmtPct(m.equity_ratio, 1)}`,
+      sub: `${fyTag} · Equity Ratio: ${fmtPct(m.equity_ratio, 1)}`,
     },
     {
       label: "5Y Share Count Δ",
@@ -283,7 +303,7 @@ export async function renderStockView(
     {
       label: "Int. Cov. / Curr. Ratio",
       value: `${fmtMultiple(m.interest_coverage)} / ${fmtMultiple(m.current_ratio)}`,
-      sub: `Net Debt / FCF: ${fmtMultiple(m.net_debt_to_fcf)}`,
+      sub: `${fyTag} · Net Debt / FCF: ${fmtMultiple(m.net_debt_to_fcf)}`,
     },
   ];
 
@@ -292,7 +312,7 @@ export async function renderStockView(
       "div",
       { className: "kpi-grid" },
       kpis.map((k) =>
-        el("div", { className: "kpi-card" }, [
+        el("div", { className: "kpi-card", title: k.title || null }, [
           el("div", { className: "kpi-label", text: k.label }),
           el("div", { className: "kpi-value", text: k.value }),
           el("div", { className: "kpi-sub", text: k.sub }),
@@ -412,13 +432,13 @@ export async function renderStockView(
           {
             key: "revenue",
             label: "Revenue",
-            data: annual.map((r) => (r.revenue != null ? +(r.revenue / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.revenue != null ? r.revenue / 1e9 : null)),
             color: PALETTE.blueSoft,
           },
           {
             key: "gross",
             label: "Gross Profit",
-            data: annual.map((r) => (r.gross_profit != null ? +(r.gross_profit / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.gross_profit != null ? r.gross_profit / 1e9 : null)),
             color: PALETTE.indigoSoft,
           },
           {
@@ -426,26 +446,26 @@ export async function renderStockView(
             label: profitLabel,
             data: annual.map((r) => {
               const v = getProfit(r);
-              return v != null ? +(v / 1e9).toFixed(2) : null;
+              return v != null ? v / 1e9 : null;
             }),
             color: PALETTE.emeraldSoft,
           },
           {
             key: "net",
             label: "Net Income",
-            data: annual.map((r) => (r.net_income != null ? +(r.net_income / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.net_income != null ? r.net_income / 1e9 : null)),
             color: PALETTE.amberSoft,
           },
           {
             key: "rd",
             label: "R&D",
-            data: annual.map((r) => (r.rd_expense != null ? +(r.rd_expense / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.rd_expense != null ? r.rd_expense / 1e9 : null)),
             color: PALETTE.violetSoft,
           },
           {
             key: "sga",
             label: "SG&A",
-            data: annual.map((r) => (r.sga_expense != null ? +(r.sga_expense / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.sga_expense != null ? r.sga_expense / 1e9 : null)),
             color: PALETTE.slateSoft,
           },
         ].filter((d) => hasAnyValue(d.data));
@@ -607,6 +627,10 @@ export async function renderStockView(
         plNotes.push(
           "Operating Income is not separately reported in standard US-GAAP for this issuer; Pretax Income is shown instead."
         );
+      } else if (annual.some((r) => r.operating_income == null && r.pretax_income != null)) {
+        plNotes.push(
+          "Operating Income is not reported in standard US-GAAP for some fiscal years; those years are left blank rather than substituted."
+        );
       }
       const gpRows = annual.filter((r) => r.gross_profit != null);
       if (gpRows.length === 0) {
@@ -658,19 +682,19 @@ export async function renderStockView(
           {
             key: "ocf",
             label: "Operating CF",
-            data: annual.map((r) => (r.operating_cf != null ? +(r.operating_cf / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.operating_cf != null ? r.operating_cf / 1e9 : null)),
             build: (data) => ({ label: "Operating CF", data, backgroundColor: PALETTE.blueSoft, order: 2 }),
           },
           {
             key: "capex",
-            label: "CapEx",
-            data: annual.map((r) => (r.capex != null ? +(-r.capex / 1e9).toFixed(2) : null)),
-            build: (data) => ({ label: "CapEx", data, backgroundColor: PALETTE.roseSoft, order: 2 }),
+            label: "CapEx (outflow)",
+            data: annual.map((r) => (r.capex != null ? -r.capex / 1e9 : null)),
+            build: (data) => ({ label: "CapEx (outflow)", data, backgroundColor: PALETTE.roseSoft, order: 2 }),
           },
           {
             key: "fcf",
             label: "Free Cash Flow",
-            data: annual.map((r) => (r.fcf != null ? +(r.fcf / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.fcf != null ? r.fcf / 1e9 : null)),
             build: (data) => ({
               type: "line",
               label: "Free Cash Flow",
@@ -686,7 +710,7 @@ export async function renderStockView(
             key: "adjFcf",
             label: "Adj. FCF (ex-SBC)",
             data: annual.map((r) =>
-              r.fcf != null && r.sbc != null ? +((r.fcf - r.sbc) / 1e9).toFixed(2) : null
+              r.fcf != null && r.sbc != null ? (r.fcf - r.sbc) / 1e9 : null
             ),
             build: (data) => ({
               type: "line",
@@ -703,13 +727,13 @@ export async function renderStockView(
           {
             key: "icf",
             label: "Investing CF",
-            data: annual.map((r) => (r.investing_cf != null ? +(r.investing_cf / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.investing_cf != null ? r.investing_cf / 1e9 : null)),
             build: (data) => ({ label: "Investing CF", data, backgroundColor: PALETTE.amberSoft, order: 2 }),
           },
           {
             key: "fin",
             label: "Financing CF",
-            data: annual.map((r) => (r.financing_cf != null ? +(r.financing_cf / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.financing_cf != null ? r.financing_cf / 1e9 : null)),
             build: (data) => ({ label: "Financing CF", data, backgroundColor: PALETTE.violetSoft, order: 2 }),
           },
         ].filter((d) => hasAnyValue(d.data));
@@ -777,17 +801,19 @@ export async function renderStockView(
           }
 
           const divData = annual.map((r) =>
-            r.dividends_paid != null ? +(r.dividends_paid / 1e9).toFixed(2) : null
+            r.dividends_paid != null ? r.dividends_paid / 1e9 : null
           );
           const buyData = annual.map((r) =>
-            r.buybacks != null ? +(r.buybacks / 1e9).toFixed(2) : null
+            r.buybacks != null ? r.buybacks / 1e9 : null
           );
           const totalData = annual.map((r) => {
-            if (r.dividends_paid == null && r.buybacks == null) return null;
-            return +(((r.dividends_paid || 0) + (r.buybacks || 0)) / 1e9).toFixed(2);
+            const effDps = effectiveDps(r);
+            const missingDivCash = r.dividends_paid == null && effDps != null && effDps > 0;
+            if (missingDivCash || (r.dividends_paid == null && r.buybacks == null)) return null;
+            return ((r.dividends_paid || 0) + (r.buybacks || 0)) / 1e9;
           });
 
-          const canvas = el("canvas", { ariaLabel: "Shareholder return chart" });
+          const canvas = el("canvas", { ariaLabel: "Cash returned to shareholders chart" });
           retCanvasWrap.appendChild(canvas);
 
           let datasets = [];
@@ -804,14 +830,14 @@ export async function renderStockView(
                 callbacks: {
                   footer: (items) => {
                     const sum = items.reduce((acc, it) => acc + (Number(it.parsed?.y) || 0), 0);
-                    return `Total Return: $${fmtAxisNum(sum, 2)}B`;
+                    return `Total Cash Returned: ${fmtAxisUsdB(sum)}`;
                   },
                 },
               },
             };
           } else if (state.returnMode === "total") {
             datasets = [
-              { label: "Total Return (Div + Buybacks)", data: totalData, backgroundColor: PALETTE.blueSoft },
+              { label: "Total Cash Returned (Div + Buybacks)", data: totalData, backgroundColor: PALETTE.blueSoft },
             ];
           } else if (state.returnMode === "dividends") {
             datasets = [{ label: "Dividends Paid", data: divData, backgroundColor: PALETTE.emeraldSoft }];
@@ -834,7 +860,7 @@ export async function renderStockView(
               cfCanvasWrap,
             ]),
             el("div", {}, [
-              el("h3", { className: "sub-chart-title", text: "Shareholder Return ($B)" }),
+              el("h3", { className: "sub-chart-title", text: "Cash Returned to Shareholders ($B)" }),
               retControls,
               retCanvasWrap,
             ]),
@@ -853,13 +879,13 @@ export async function renderStockView(
               { label: "Operating CF", num: true },
               { label: "Investing CF", num: true },
               { label: "Financing CF", num: true },
-              { label: "CapEx", num: true },
+              { label: "CapEx (outflow)", num: true },
               { label: "FCF", num: true },
               { label: "SBC", num: true },
               { label: "Adj. FCF", num: true },
               { label: "Dividends", num: true },
               { label: "Buybacks", num: true },
-              { label: "Total Return", num: true },
+              { label: "Total Cash Returned", num: true },
             ],
             annualDesc.map((r) => {
               const adjFcf = r.fcf != null && r.sbc != null ? r.fcf - r.sbc : null;
@@ -890,14 +916,15 @@ export async function renderStockView(
         );
       }
 
+      const cfNotes = [
+        "Total Cash Returned = Dividends Paid + Share Buybacks (excludes share price appreciation); CapEx is plotted as a negative outflow on the chart.",
+      ];
       if (!hasAnyValue(annual.slice(-3).map((r) => r.capex))) {
-        body.appendChild(
-          el("p", {
-            className: "section-note",
-            text: "CapEx is not separately reported in standard SEC XBRL cash flow tags for recent fiscal years; Free Cash Flow is shown as — where unavailable.",
-          })
+        cfNotes.push(
+          "CapEx is not separately reported in standard SEC XBRL cash flow tags for recent fiscal years; Free Cash Flow is shown as — where unavailable."
         );
       }
+      body.appendChild(el("p", { className: "section-note", text: cfNotes.join(" ") }));
 
       card.appendChild(body);
       sectionsContainer.appendChild(card);
@@ -933,28 +960,28 @@ export async function renderStockView(
             key: "assets",
             label: "Assets",
             isRight: false,
-            data: annual.map((r) => (r.total_assets != null ? +(r.total_assets / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.total_assets != null ? r.total_assets / 1e9 : null)),
             build: (data) => ({ label: "Total Assets", data, backgroundColor: PALETTE.slateSoft, yAxisID: "y", order: 2 }),
           },
           {
             key: "equity",
             label: "Equity",
             isRight: false,
-            data: annual.map((r) => (r.total_equity != null ? +(r.total_equity / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.total_equity != null ? r.total_equity / 1e9 : null)),
             build: (data) => ({ label: "Total Equity", data, backgroundColor: PALETTE.blueSoft, yAxisID: "y", order: 2 }),
           },
           {
             key: "debt",
             label: "Total Debt",
             isRight: false,
-            data: annual.map((r) => (r.total_debt != null ? +(r.total_debt / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.total_debt != null ? r.total_debt / 1e9 : null)),
             build: (data) => ({ label: "Total Debt", data, backgroundColor: PALETTE.roseSoft, yAxisID: "y", order: 2 }),
           },
           {
             key: "cash",
             label: "Cash",
             isRight: false,
-            data: annual.map((r) => (r.cash != null ? +(r.cash / 1e9).toFixed(2) : null)),
+            data: annual.map((r) => (r.cash != null ? r.cash / 1e9 : null)),
             build: (data) => ({ label: "Cash", data, backgroundColor: PALETTE.emeraldSoft, yAxisID: "y", order: 2 }),
           },
           {
@@ -962,7 +989,7 @@ export async function renderStockView(
             label: "Net Debt",
             isRight: false,
             data: annual.map((r) =>
-              r.total_debt != null ? +((r.total_debt - (r.cash || 0)) / 1e9).toFixed(2) : null
+              r.total_debt != null && r.cash != null ? (r.total_debt - r.cash) / 1e9 : null
             ),
             build: (data) => ({
               type: "line",
@@ -982,7 +1009,7 @@ export async function renderStockView(
             isRight: false,
             data: annual.map((r) =>
               r.goodwill != null || r.intangibles != null
-                ? +(((r.goodwill || 0) + (r.intangibles || 0)) / 1e9).toFixed(2)
+                ? ((r.goodwill || 0) + (r.intangibles || 0)) / 1e9
                 : null
             ),
             build: (data) => ({
@@ -1172,14 +1199,18 @@ export async function renderStockView(
               { label: "Cash", num: true },
               { label: "Total Debt", num: true },
               { label: "Net Debt", num: true },
-              { label: "Goodwill", num: true },
+              { label: "Goodwill & Intang.", num: true },
               { label: "Curr. Ratio", num: true },
               { label: "Int. Cov.", num: true },
               { label: "ROIC", num: true },
               { label: "Shares", num: true },
             ],
             annualDesc.map((r) => {
-              const netDebt = r.total_debt != null ? r.total_debt - (r.cash || 0) : null;
+              const netDebt = r.total_debt != null && r.cash != null ? r.total_debt - r.cash : null;
+              const gwIntang =
+                r.goodwill != null || r.intangibles != null
+                  ? (r.goodwill || 0) + (r.intangibles || 0)
+                  : null;
               const currRatio =
                 r.current_assets != null && r.current_liabilities > 0
                   ? r.current_assets / r.current_liabilities
@@ -1191,7 +1222,7 @@ export async function renderStockView(
                 fmtUsdCompact(r.cash),
                 fmtUsdCompact(r.total_debt),
                 fmtUsdCompact(netDebt),
-                fmtUsdCompact(r.goodwill),
+                fmtUsdCompact(gwIntang),
                 fmtMultiple(currRatio),
                 fmtMultiple(calcInterestCoverage(r)),
                 fmtPct(calcAnnualRoic(r), 1),
@@ -1210,6 +1241,15 @@ export async function renderStockView(
       if (!hasAnyValue(annual.map((r) => r.current_assets))) {
         bsNotes.push(
           "Unclassified balance sheet (common for banks and insurers): Current Ratio is not applicable."
+        );
+      }
+      const hasClippedRoic = annual.some((r) => {
+        const v = calcAnnualRoic(r);
+        return v != null && (v <= -1 || v >= 2);
+      });
+      if (hasClippedRoic) {
+        bsNotes.push(
+          "ROIC values outside −100% to +200% are omitted from the chart (see table for exact figures)."
         );
       }
       if (bsNotes.length > 0) {
@@ -1347,11 +1387,12 @@ export async function renderStockView(
           return epsGap || fcfGap;
         });
       const divNotes = [
+        "Effective DPS uses DPS Declared when reported, otherwise DPS Paid, otherwise Dividends Paid ÷ diluted shares (a dash means the issuer did not report that specific XBRL tag).",
         "Payout (EPS) is calculated on a per-share basis (Effective DPS ÷ Diluted EPS); Payout (FCF) uses aggregate cash flows (Dividends Paid ÷ FCF). Headline KPI payout ratios use the latest full fiscal year.",
       ];
       if (hasPayoutGap) {
         divNotes.push(
-          "Payout lines omit years with negative EPS/FCF or payout ratios above 250% (see table below for exact figures)."
+          "Payout ratios are not meaningful when EPS or FCF is negative (shown as — in both chart and table); years above 250% are omitted from the chart lines (see table for exact figures)."
         );
       }
       if (m.data_notes && /special|one-time|stale|predates/i.test(m.data_notes)) {
@@ -1428,14 +1469,14 @@ export async function renderStockView(
         const qDs1 = [
           {
             label: "Revenue ($B)",
-            data: recentQ.map((q) => (q.revenue != null ? +(q.revenue / 1e9).toFixed(2) : null)),
+            data: recentQ.map((q) => (q.revenue != null ? q.revenue / 1e9 : null)),
             backgroundColor: PALETTE.blueSoft,
             yAxisID: "y",
             order: 2,
           },
           {
             label: "Net Income ($B)",
-            data: recentQ.map((q) => (q.net_income != null ? +(q.net_income / 1e9).toFixed(2) : null)),
+            data: recentQ.map((q) => (q.net_income != null ? q.net_income / 1e9 : null)),
             backgroundColor: PALETTE.amberSoft,
             yAxisID: "y",
             order: 2,
@@ -1461,7 +1502,7 @@ export async function renderStockView(
         });
 
         const qEpsData = recentQ.map((q) => q.eps_diluted);
-        const qFcfData = recentQ.map((q) => (q.fcf != null ? +(q.fcf / 1e9).toFixed(2) : null));
+        const qFcfData = recentQ.map((q) => (q.fcf != null ? q.fcf / 1e9 : null));
         const hasQFcf = hasAnyValue(qFcfData);
         const qDs2 = [];
         if (hasAnyValue(qEpsData)) {
@@ -1524,6 +1565,13 @@ export async function renderStockView(
         );
       }
 
+      body.appendChild(
+        el("p", {
+          className: "section-note",
+          text: "Standalone 3-month figures from 10-Q filings; Q4 is derived as full-year (10-K) minus the first nine months and may include year-end adjustments.",
+        })
+      );
+
       card.appendChild(body);
       sectionsContainer.appendChild(card);
     }
@@ -1564,6 +1612,19 @@ export async function renderStockView(
         const c1 = el("canvas", { ariaLabel: "Multi-ETF weight and implied price chart" });
         body.appendChild(el("div", { className: "chart-box-tall" }, [c1]));
 
+        const allDatesMs = allDates.map((d) => Date.parse(d));
+        const MAX_BRIDGE_MS = 200 * 86400000;
+        const gapBreaker = (baseColor) => ({
+          borderColor: (ctx) => {
+            const t0 = allDatesMs[ctx.p0DataIndex];
+            const t1 = allDatesMs[ctx.p1DataIndex];
+            if (Number.isFinite(t0) && Number.isFinite(t1) && t1 - t0 > MAX_BRIDGE_MS) {
+              return "transparent";
+            }
+            return baseColor;
+          },
+        });
+
         const datasets = etfIds.map((eid, i) => {
           const color = etfColors[i % etfColors.length];
           return {
@@ -1574,6 +1635,7 @@ export async function renderStockView(
             borderWidth: 2,
             pointRadius: etfIds.length > 1 ? 1.5 : 2.2,
             spanGaps: true,
+            segment: gapBreaker(color),
             tension: 0.15,
             yAxisID: "y",
           };
@@ -1591,6 +1653,7 @@ export async function renderStockView(
             borderDash: etfIds.length > 1 ? [4, 3] : [],
             pointRadius: 1.5,
             spanGaps: true,
+            segment: gapBreaker(PALETTE.emerald),
             tension: 0.15,
             yAxisID: "y1",
           });
@@ -1678,7 +1741,7 @@ export async function renderStockView(
         body.appendChild(
           el("p", {
             className: "section-note",
-            text: `Dataset coverage: ${covParts.join(", ")}. Dates prior to a fund's coverage start reflect available filing history rather than exclusion.`,
+            text: `Dataset coverage: ${covParts.join(", ")}. Dates prior to a fund's coverage start reflect available filing history rather than exclusion. Lines break where the security was not held for more than two quarters.`,
           })
         );
       }

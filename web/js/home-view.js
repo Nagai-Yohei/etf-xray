@@ -86,7 +86,13 @@ function renderHeroSection(meta, stocksList, navigate) {
             : el("span", { className: "badge badge-slate", text: "Former" });
         const yieldTag =
           s.ttm_yield !== null && s.ttm_yield !== undefined
-            ? el("span", { className: "num text-muted", text: fmtPct(s.ttm_yield, 2) })
+            ? el("span", {
+                className: "num text-muted",
+                text: `Yield ${fmtPct(s.ttm_yield, 2)}`,
+                title: s.latest_price_date
+                  ? `TTM dividend yield based on implied price as of ${s.latest_price_date}`
+                  : "TTM dividend yield",
+              })
             : null;
         searchDropdown.appendChild(
           el(
@@ -297,7 +303,7 @@ function renderEtfCardsSection(meta, navigate) {
       el("h2", { className: "home-section-title", text: "Covered ETFs" }),
       el("span", {
         className: "home-section-sub",
-        text: "Select an ETF to explore historical constituents, rebalance turnover, and holding tenure.",
+        text: "Select an ETF to explore historical constituents, rebalance turnover, and holding tenure. Latest reporting dates differ by fund (fiscal quarter-ends).",
       }),
     ]),
     el("div", { className: "etf-card-grid" }, cards),

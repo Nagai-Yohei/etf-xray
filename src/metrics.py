@@ -54,12 +54,13 @@ def rebuild_quarter_prices(conn: sqlite3.Connection) -> int:
     """Rebuild quarter_prices from etf_holdings (value_usd / shares)."""
     conn.execute("DELETE FROM quarter_prices")
     # When multiple ETFs hold a security on the same date, use the ETF with the largest position value
+    # (tie-broken deterministically by etf_id ASC)
     rows = conn.execute(
         """
         SELECT security_id, as_of, etf_id, value_usd, shares
         FROM etf_holdings
         WHERE shares > 0 AND value_usd > 0
-        ORDER BY security_id, as_of, value_usd DESC
+        ORDER BY security_id, as_of, value_usd DESC, etf_id ASC
         """
     ).fetchall()
 
@@ -76,6 +77,19 @@ def rebuild_quarter_prices(conn: sqlite3.Connection) -> int:
         VALUES (?, ?, ?, ?)
         """,
         [(sec_id, as_of, price, etf_id) for (sec_id, as_of), (price, etf_id) in sorted(best.items())],
+    )
+    # Keep securities.first_seen / last_seen strictly synchronized with actual etf_holdings dates
+    conn.execute(
+        """
+        UPDATE securities
+        SET first_seen = (
+                SELECT MIN(h.as_of) FROM etf_holdings h WHERE h.security_id = securities.security_id
+            ),
+            last_seen = (
+                SELECT MAX(h.as_of) FROM etf_holdings h WHERE h.security_id = securities.security_id
+            )
+        WHERE EXISTS (SELECT 1 FROM etf_holdings h WHERE h.security_id = securities.security_id)
+        """
     )
     conn.commit()
     return len(best)
@@ -368,6 +382,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                 latest_ann["net_income"] is not None
                 and latest_ann["total_equity"] is not None
                 and float(latest_ann["total_equity"]) > 0
+                and (eq_latest is None or eq_latest > 0)
             ):
                 roe = float(latest_ann["net_income"]) / float(latest_ann["total_equity"])
 
