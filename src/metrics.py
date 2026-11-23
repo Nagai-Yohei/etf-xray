@@ -172,25 +172,23 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
     conn.execute("DELETE FROM stock_metrics")
 
     sec_rows = conn.execute(
-        "SELECT security_id, sector_group FROM securities ORDER BY security_id"
+        "SELECT security_id, cik, sector_group FROM securities ORDER BY security_id"
     ).fetchall()
     sec_ids = [r["security_id"] for r in sec_rows]
+    cik_by_sec = {r["security_id"]: r["cik"] for r in sec_rows}
     sector_by_sec = {r["security_id"]: r["sector_group"] for r in sec_rows}
+    cik_overrides = load_cik_overrides()
 
-    # Latest quarter-end price map
+    # Latest and prior quarter-end price maps (prior price helps check if a post-10-K split already hit latest_price)
     latest_prices: dict[str, tuple[str, float]] = {}
+    prev_prices: dict[str, float] = {}
     for r in conn.execute(
-        """
-        SELECT q.security_id, q.as_of, q.price_usd
-        FROM quarter_prices q
-        INNER JOIN (
-            SELECT security_id, MAX(as_of) AS max_as_of
-            FROM quarter_prices
-            GROUP BY security_id
-        ) m ON q.security_id = m.security_id AND q.as_of = m.max_as_of
-        """
+        "SELECT security_id, as_of, price_usd FROM quarter_prices ORDER BY security_id, as_of ASC"
     ).fetchall():
-        latest_prices[r["security_id"]] = (r["as_of"], float(r["price_usd"]))
+        sid = r["security_id"]
+        if sid in latest_prices:
+            prev_prices[sid] = latest_prices[sid][1]
+        latest_prices[sid] = (r["as_of"], float(r["price_usd"]))
 
     ttm_map = {
         r["security_id"]: r
@@ -269,26 +267,69 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             except ValueError:
                 pass
 
-        # Dividend yield, P/E, and P/B based on implied quarter-end price
+        # Align latest_price onto the post-split share basis when a split took effect AFTER latest_price_date
+        # (e.g. APH/MNST/SFBS/CRWD split after the latest ETF quarter-end, while BKNG/PIPR split before it)
+        ratio_price = latest_price
+        if (
+            not price_is_stale
+            and latest_price
+            and latest_price > 0
+            and latest_price_date
+            and latest_ann is not None
+            and latest_ann["split_factor"] is not None
+            and abs(float(latest_ann["split_factor"]) - 1.0) > 0.05
+        ):
+            sec_cik = cik_by_sec.get(sec_id)
+            if sec_cik:
+                chain = get_cik_chain(sec_id, sec_cik, cik_overrides)
+                cf_payloads = []
+                for c in chain:
+                    cf_path = RAW_DIR / "edgar" / "companyfacts" / f"CIK{c}.json"
+                    if cf_path.is_file():
+                        try:
+                            cf_payloads.append(json.loads(cf_path.read_text(encoding="utf-8")))
+                        except Exception:
+                            pass
+                if cf_payloads:
+                    _, sp_events = extract_annual_financials(merge_company_facts(cf_payloads))
+                    post_price_factor = 1.0
+                    for sp_filed, sp_f in sp_events:
+                        if sp_filed > latest_price_date:
+                            post_price_factor *= sp_f
+                    if abs(post_price_factor - 1.0) > 0.05:
+                        prev_p = prev_prices.get(sec_id)
+                        # Only adjust if latest_price has not already jumped by ~1/post_price_factor vs prior quarter
+                        already_split_in_price = (
+                            prev_p is not None
+                            and prev_p > 0
+                            and abs((latest_price / prev_p) * post_price_factor - 1.0) <= 0.35
+                        )
+                        if not already_split_in_price:
+                            ratio_price = latest_price / post_price_factor
+                            notes.append(
+                                "Valuation/yield ratios adjusted for stock split occurring after latest ETF reporting date"
+                            )
+
+        # Dividend yield, P/E, and P/B based on split-aligned implied quarter-end price
         ttm_yield = (
-            (dps_ttm / latest_price)
+            (dps_ttm / ratio_price)
             if (
                 not price_is_stale
                 and dps_ttm is not None
                 and dps_ttm >= 0
-                and latest_price
-                and latest_price > 0
+                and ratio_price
+                and ratio_price > 0
             )
             else None
         )
         pe_ratio = (
-            (latest_price / eps_ttm)
+            (ratio_price / eps_ttm)
             if (
                 not price_is_stale
                 and eps_ttm is not None
                 and eps_ttm > 0
-                and latest_price
-                and latest_price > 0
+                and ratio_price
+                and ratio_price > 0
             )
             else None
         )
@@ -348,12 +389,12 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             and eq_latest > 0
             and sh_latest
             and sh_latest > 0
-            and latest_price
-            and latest_price > 0
+            and ratio_price
+            and ratio_price > 0
         ):
             bps = eq_latest / sh_latest
             if bps > 0:
-                pb_ratio = latest_price / bps
+                pb_ratio = ratio_price / bps
 
         # Same-fiscal-year payout ratios (DPS / EPS and aggregate DividendsPaid / FCF)
         payout_ratio_eps = None
@@ -536,7 +577,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             (str(r["fy_end"]), val)
             for r in ann_rows
             for val, _ in [_effective_dps(r)]
-            if val is not None and val > 0
+            if val is not None and val >= 0.01
         ]
         rev_series = [
             (str(r["fy_end"]), float(r["revenue"]))

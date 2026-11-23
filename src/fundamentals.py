@@ -131,6 +131,9 @@ QUARTERLY_FORMS = {"10-Q", "10-Q/A"}
 
 # Common stock split ratios (snap to exact ratio if within +/-2.5%)
 KNOWN_SPLIT_RATIOS = (
+    50.0,
+    30.0,
+    25.0,
     20.0,
     15.0,
     10.0,
@@ -784,6 +787,112 @@ def extract_annual_financials(
         shares_out_recs=shares_out_bs_raw,
     )
 
+    # 1b. Also detect post-10-K mid-year stock splits (e.g. BKNG 25:1, PIPR 4:1, APH 2:1, MNST 2:1 in 2026)
+    # by comparing overlapping prior-year comparative 10-Q periods reported before vs after the latest 10-K
+    latest_10k_filed = max(
+        (r.filed for r in (flow_sh_raw["shares_diluted"] + flow_ps_raw["eps_diluted"]) if r.filed),
+        default=None,
+    )
+    if latest_10k_filed:
+        q_sh_recs = _iter_tag_records(
+            company_facts, TAG_MAP_FLOW_SHARES["shares_diluted"], ("shares",), QUARTERLY_FORMS
+        )
+        q_eps_recs = _iter_tag_records(
+            company_facts, TAG_MAP_FLOW_PER_SHARE["eps_diluted"], ("USD/shares",), QUARTERLY_FORMS
+        )
+
+        def _index_q_periods(recs: list[FactRecord]) -> dict[tuple[str, str], dict[str, FactRecord]]:
+            tbl: dict[tuple[str, str], dict[str, FactRecord]] = defaultdict(dict)
+            for rec in recs:
+                dur = _duration_days(rec.start, rec.end)
+                if dur is None or not (60 <= dur <= 310) or not rec.start:
+                    continue
+                cur = tbl[(rec.start, rec.end)].get(rec.filed)
+                if cur is None or rec.priority < cur.priority:
+                    tbl[(rec.start, rec.end)][rec.filed] = rec
+            return tbl
+
+        q_sh_idx = _index_q_periods(q_sh_recs)
+        q_eps_idx = _index_q_periods(q_eps_recs)
+        post_ratios: list[float] = []
+        post_filings: list[str] = []
+
+        for period_key, sh_by_filed in q_sh_idx.items():
+            pre_filings = [f for f in sh_by_filed if f <= latest_10k_filed]
+            after_filings = [f for f in sh_by_filed if f > latest_10k_filed]
+            if not pre_filings or not after_filings:
+                continue
+            pre_f = max(pre_filings)
+            post_f = max(after_filings)
+            old_sh = sh_by_filed[pre_f].val
+            new_sh = sh_by_filed[post_f].val
+            if old_sh <= 0 or new_sh <= 0:
+                continue
+            r_sh = new_sh / old_sh
+            # Check EPS corroboration for the same comparative period (also handles 1e3x/1e6x share unit switches)
+            eps_map = q_eps_idx.get(period_key, {})
+            old_e_rec = eps_map.get(pre_f)
+            new_e_rec = eps_map.get(post_f)
+            if (
+                old_e_rec is not None
+                and new_e_rec is not None
+                and abs(old_e_rec.val) >= 0.10
+                and abs(new_e_rec.val) >= 0.02
+                and (old_e_rec.val * new_e_rec.val > 0)
+            ):
+                r_eps_inv = old_e_rec.val / new_e_rec.val
+                if 0.80 <= r_eps_inv <= 1.25:
+                    continue
+                # Normalize 1e3x/1e6x unit switch in shares if inverse EPS confirms a real split
+                tol = 0.16 if abs(new_e_rec.val) < 0.25 else 0.06
+                cand_r = r_sh
+                for mult in (1.0, 1_000.0, 1_000_000.0, 1e-3, 1e-6):
+                    scaled = r_sh * mult
+                    if abs(scaled / r_eps_inv - 1.0) <= tol:
+                        cand_r = scaled
+                        break
+                if abs(cand_r / r_eps_inv - 1.0) <= tol and (cand_r >= 1.25 or cand_r <= 0.80):
+                    post_ratios.append(cand_r)
+                    # Record earliest post-10K filing that already uses the split-adjusted share basis
+                    for af in sorted(after_filings):
+                        af_r = sh_by_filed[af].val / old_sh
+                        if any(abs((af_r * m) / r_eps_inv - 1.0) <= tol for m in (1.0, 1e3, 1e6, 1e-3, 1e-6)):
+                            post_filings.append(af)
+                            break
+
+        if post_ratios and post_filings:
+            factor = _snap_split_ratio(statistics.median(post_ratios))
+            eff_filed = min(post_filings)
+            # Confirm the latest 10-K itself is still on the pre-split share basis
+            # (prevents double-applying a split already reflected in the latest 10-K, e.g. AMCR FY2026)
+            latest_10k_sh_recs = [
+                r
+                for r in flow_sh_raw["shares_diluted"]
+                if _is_annual_flow(r) and r.filed == latest_10k_filed and r.val > 0
+            ]
+            latest_post_q_recs = [
+                r
+                for r in q_sh_recs
+                if r.filed >= eff_filed
+                and r.val > 0
+                and _duration_days(r.start, r.end) is not None
+                and 60 <= (_duration_days(r.start, r.end) or 0) <= 310
+            ]
+            already_in_10k = False
+            if latest_10k_sh_recs and latest_post_q_recs:
+                k_sh = max(latest_10k_sh_recs, key=lambda r: (r.end, -r.priority)).val
+                q_sh = max(latest_post_q_recs, key=lambda r: (r.end, r.filed, -r.priority)).val
+                q_vs_k = q_sh / k_sh
+                norm_q_vs_k = min(
+                    (q_vs_k * m for m in (1.0, 1e3, 1e6, 1e-3, 1e-6)),
+                    key=lambda v: abs(v - 1.0),
+                )
+                if 0.70 <= norm_q_vs_k <= 1.40:
+                    already_in_10k = True
+            if not already_in_10k and (factor >= 1.25 or factor <= 0.80):
+                split_events.append((eff_filed, factor))
+                split_events.sort(key=lambda item: item[0])
+
     # 2. Pick the best annual record per fy_end for each flow metric
     flow_usd = {m: _select_best_annual_flow(recs) for m, recs in flow_usd_raw.items()}
     flow_ps = {
@@ -1084,7 +1193,19 @@ def extract_annual_financials(
                     and abs(r.val) > 0
                 ]
                 if in_fy:
-                    div_paid_val = sum(abs(r.val) for r in in_fy)
+                    cand_sum = sum(abs(r.val) for r in in_fy)
+                    ref_dps = dps_p_adj if (dps_p_adj is not None and dps_p_adj > 0) else dps_d_adj
+                    ref_sh = max(sh_dil_adj or 0.0, sh_out_adj or 0.0)
+                    # Reject partial 1-quarter sums when full-year DPS*shares is >2x larger (e.g. SPG FY2019)
+                    if (
+                        ref_dps is not None
+                        and ref_dps > 0
+                        and ref_sh > 0
+                        and cand_sum < 0.50 * ref_dps * ref_sh
+                    ):
+                        div_paid_val = None
+                    else:
+                        div_paid_val = cand_sum
         buyback_val = abs(buyback_rec.val) if buyback_rec is not None else None
 
         # Representative split factor (based on PL filing date)
@@ -1132,7 +1253,7 @@ def extract_annual_financials(
                 dps_d_adj > 0.0
                 and dps_p_adj is None
                 and est_dps is not None
-                and est_dps > 0.20
+                and est_dps > 0.05
                 and 0.15 <= (dps_d_adj / est_dps) <= 0.35
             ):
                 # Single-quarter DPS (~1/4 of annual implied) mis-tagged as annual

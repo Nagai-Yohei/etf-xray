@@ -435,17 +435,25 @@ def check_dist_json(errors: list[str]) -> str:
             rel = jf.relative_to(PROJECT_ROOT)
             errors.append(f"[DIST] Invalid JSON in {rel}: {exc}")
 
-    # Verify every security_id in stocks/index.json has a corresponding detail JSON file
+    # Verify 4-way synchronization across meta.json, etf summaries, holdings files, and stocks/index.json
     stocks_index_path = DIST_DIR / "data" / "stocks" / "index.json"
+    meta_path = DIST_DIR / "data" / "meta.json"
     if stocks_index_path.is_file():
         try:
             idx_data = json.loads(stocks_index_path.read_text(encoding="utf-8"))
             if isinstance(idx_data, dict):
                 stocks_dir = stocks_index_path.parent
+                actual_files = {
+                    p.stem for p in stocks_dir.glob("*.json") if p.name != "index.json"
+                }
+                idx_keys = set(idx_data.keys())
+                for dead_id in sorted(idx_keys - actual_files):
+                    errors.append(f"[DIST] Dead security_id in stocks/index.json: {dead_id}")
+                for missing_id in sorted(actual_files - idx_keys):
+                    errors.append(f"[DIST] Stock detail file missing from stocks/index.json: {missing_id}")
                 for sec_id in idx_data:
                     stock_path = stocks_dir / f"{sec_id}.json"
                     if not stock_path.is_file():
-                        errors.append(f"[DIST] Missing stock detail JSON for {sec_id}")
                         continue
                     try:
                         s_doc = json.loads(stock_path.read_text(encoding="utf-8"))
@@ -462,6 +470,36 @@ def check_dist_json(errors: list[str]) -> str:
                             )
                     except Exception:  # noqa: BLE001
                         pass
+                if meta_path.is_file():
+                    meta_doc = json.loads(meta_path.read_text(encoding="utf-8"))
+                    if meta_doc.get("stock_count") != len(idx_keys):
+                        errors.append(
+                            f"[DIST] meta.stock_count={meta_doc.get('stock_count')} != index count {len(idx_keys)}"
+                        )
+                    for etf_m in meta_doc.get("etfs") or []:
+                        eid = etf_m.get("etf_id")
+                        sum_path = DIST_DIR / "data" / "etf" / eid / "summary.json"
+                        if not sum_path.is_file():
+                            errors.append(f"[DIST] Missing summary.json for {eid}")
+                            continue
+                        sum_doc = json.loads(sum_path.read_text(encoding="utf-8"))
+                        dates_map = {d["as_of"]: d for d in sum_doc.get("dates") or []}
+                        latest_as_of = etf_m.get("latest_as_of")
+                        latest_d = dates_map.get(latest_as_of)
+                        if not latest_d:
+                            errors.append(f"[DIST] {eid} summary missing latest_as_of {latest_as_of}")
+                            continue
+                        if latest_d.get("holdings_count") != etf_m.get("latest_holdings_count") or abs(
+                            float(latest_d.get("total_value_usd", 0)) - float(etf_m.get("latest_total_value_usd", 0))
+                        ) > 1.0:
+                            errors.append(f"[DIST] {eid} meta vs summary mismatch on {latest_as_of}")
+                        h_path = DIST_DIR / "data" / "etf" / eid / "holdings" / f"{latest_as_of}.json"
+                        if h_path.is_file():
+                            h_doc = json.loads(h_path.read_text(encoding="utf-8"))
+                            if len(h_doc.get("holdings") or []) != latest_d.get("holdings_count"):
+                                errors.append(
+                                    f"[DIST] {eid} {latest_as_of} summary vs holdings count mismatch"
+                                )
         except Exception:  # noqa: BLE001
             pass
 
