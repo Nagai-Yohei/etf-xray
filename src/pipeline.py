@@ -26,6 +26,9 @@ from src.fundamentals import (
     extract_annual_financials,
     extract_quarterly_financials,
     extract_ttm_financials,
+    get_cik_chain,
+    load_cik_overrides,
+    merge_company_facts,
 )
 from src.identify import ResolvedHolding, resolve_all_filings
 from src.metrics import rebuild_quarter_prices, rebuild_stock_metrics
@@ -211,6 +214,22 @@ def update_fundamentals(
     offline_only: bool = False,
 ) -> tuple[int, int]:
     """Fetch SEC XBRL annual, quarterly, and TTM fundamentals for all securities with a CIK."""
+    cik_overrides = load_cik_overrides()
+
+    # Backfill missing primary CIKs on existing securities from config/cik_overrides.json
+    for sec_id, entry in cik_overrides.items():
+        override_cik = entry.get("cik")
+        if override_cik:
+            conn.execute(
+                """
+                UPDATE securities
+                SET cik = ?
+                WHERE security_id = ? AND (cik IS NULL OR cik = '')
+                """,
+                (override_cik, sec_id),
+            )
+    conn.commit()
+
     targets = conn.execute(
         """
         SELECT security_id, ticker, cik
@@ -220,9 +239,9 @@ def update_fundamentals(
         """
     ).fetchall()
 
-    # Extract once per CIK and share across dual-class securities (e.g. CWEN / CWEN.A)
+    # Extract once per CIK chain and share across dual-class securities (e.g. CWEN / CWEN.A)
     facts_cache: dict[
-        str, tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]
+        tuple[str, ...], tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]
     ] = {}
     ok_count = 0
     miss_count = 0
@@ -230,23 +249,29 @@ def update_fundamentals(
     for idx, row in enumerate(targets, start=1):
         sec_id = row["security_id"]
         cik = row["cik"]
+        cik_chain = get_cik_chain(sec_id, cik, cik_overrides)
 
-        if cik not in facts_cache:
-            try:
-                raw_facts = client.get_company_facts(cik, offline_only=offline_only)
-                ann_rows, splits = extract_annual_financials(raw_facts)
-                q_rows = extract_quarterly_financials(raw_facts, ann_rows, splits)
-                ttm_row = extract_ttm_financials(raw_facts, ann_rows)
-                facts_cache[cik] = (ann_rows, q_rows, ttm_row)
-            except RuntimeError as exc:
-                # Skip HTTP 404 or offline cache misses, but fail fast on network errors
-                msg = str(exc)
-                if "HTTP 404" in msg or (offline_only and "offline mode" in msg):
-                    facts_cache[cik] = ([], [], None)
-                else:
+        if cik_chain not in facts_cache:
+            payloads: list[dict[str, Any]] = []
+            for c in cik_chain:
+                try:
+                    payloads.append(client.get_company_facts(c, offline_only=offline_only))
+                except RuntimeError as exc:
+                    # Skip HTTP 404 or offline cache misses, but fail fast on network errors
+                    msg = str(exc)
+                    if "HTTP 404" in msg or (offline_only and "offline mode" in msg):
+                        continue
                     raise
+            if payloads:
+                merged_facts = merge_company_facts(payloads)
+                ann_rows, splits = extract_annual_financials(merged_facts)
+                q_rows = extract_quarterly_financials(merged_facts, ann_rows, splits)
+                ttm_row = extract_ttm_financials(merged_facts, ann_rows)
+                facts_cache[cik_chain] = (ann_rows, q_rows, ttm_row)
+            else:
+                facts_cache[cik_chain] = ([], [], None)
 
-        ann_rows, q_rows, ttm_row = facts_cache[cik]
+        ann_rows, q_rows, ttm_row = facts_cache[cik_chain]
         conn.execute("DELETE FROM financials_annual WHERE security_id = ?", (sec_id,))
         conn.execute("DELETE FROM financials_quarterly WHERE security_id = ?", (sec_id,))
         conn.execute("DELETE FROM financials_ttm WHERE security_id = ?", (sec_id,))

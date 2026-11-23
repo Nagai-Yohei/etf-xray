@@ -28,6 +28,7 @@ import requests
 from src.adapters.nport import FilingHoldings, RawHolding
 from src.edgar import EdgarClient, normalize_cik
 from src.env import CONFIG_DIR, RAW_DIR, get_openfigi_api_key
+from src.fundamentals import load_cik_overrides
 
 MANUAL_TICKERS_PATH = CONFIG_DIR / "manual_tickers.csv"
 OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
@@ -338,6 +339,7 @@ def resolve_all_filings(
 ) -> tuple[dict[str, list[ResolvedHolding]], dict[str, dict[str, Any]]]:
     """Resolve holdings across all reporting dates and return (by_as_of_holdings, securities_catalog)."""
     manual_cusip, manual_exact_name, manual_norm_name = load_manual_tickers()
+    cik_overrides = load_cik_overrides()
     ticker_to_cik, sec_name_map = _build_sec_maps(client)
     figi = OpenFigiClient()
 
@@ -488,11 +490,13 @@ def resolve_all_filings(
                     if ticker is not None:
                         break
 
-            # Resolve CIK (fall back to parent ticker for dotted share classes if needed)
+            # Resolve CIK (fall back to parent ticker for dotted share classes, then cik_overrides.json)
             if cik is None and ticker:
                 cik = ticker_to_cik.get(ticker) or ticker_to_cik.get(ticker.replace(".", "-"))
                 if cik is None and "." in ticker:
                     cik = ticker_to_cik.get(ticker.split(".", 1)[0])
+                if cik is None and ticker in cik_overrides:
+                    cik = cik_overrides[ticker].get("cik")
 
             # Assign canonical security_id
             if ticker:

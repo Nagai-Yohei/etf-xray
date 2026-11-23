@@ -10,14 +10,121 @@ Key features:
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from src.edgar import EdgarClient, normalize_cik
+from src.env import CONFIG_DIR
+
+CIK_OVERRIDES_PATH = CONFIG_DIR / "cik_overrides.json"
+
+
+def load_cik_overrides(path: Path = CIK_OVERRIDES_PATH) -> dict[str, dict[str, Any]]:
+    """Load curated CIK overrides and legacy predecessor CIK chains from config/cik_overrides.json."""
+    if not path.is_file():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, dict[str, Any]] = {}
+    for sec_id, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        cik_val = entry.get("cik")
+        legacy_vals = entry.get("legacy_ciks") or []
+        out[str(sec_id).strip().upper()] = {
+            "cik": normalize_cik(cik_val) if cik_val else None,
+            "legacy_ciks": [normalize_cik(c) for c in legacy_vals if c],
+        }
+    return out
+
+
+def get_cik_chain(
+    security_id: str,
+    primary_cik: str | None,
+    overrides: dict[str, dict[str, Any]],
+) -> tuple[str, ...]:
+    """Return an ordered, deduplicated tuple of CIKs (oldest legacy -> current) for a security."""
+    entry = overrides.get(security_id.upper()) or {}
+    chain: list[str] = []
+    for lc in entry.get("legacy_ciks") or []:
+        if lc not in chain:
+            chain.append(lc)
+    eff_primary = normalize_cik(primary_cik) if primary_cik else entry.get("cik")
+    if eff_primary and eff_primary not in chain:
+        chain.append(eff_primary)
+    elif entry.get("cik") and entry["cik"] not in chain:
+        chain.append(entry["cik"])
+    return tuple(chain)
+
+
+def merge_company_facts(facts_list: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge multiple SEC companyfacts JSON payloads (oldest -> newest) into a unified payload."""
+    valid = [f for f in facts_list if isinstance(f, dict) and f.get("facts")]
+    if not valid:
+        return {}
+    if len(valid) == 1:
+        return valid[0]
+
+    newest = valid[-1]
+    merged_facts: dict[str, dict[str, dict[str, Any]]] = {}
+
+    for payload in valid:
+        for taxonomy, tags in (payload.get("facts") or {}).items():
+            if not isinstance(tags, dict):
+                continue
+            tax_dst = merged_facts.setdefault(taxonomy, {})
+            for tag, tag_obj in tags.items():
+                if not isinstance(tag_obj, dict):
+                    continue
+                tag_dst = tax_dst.setdefault(
+                    tag,
+                    {
+                        "label": tag_obj.get("label"),
+                        "description": tag_obj.get("description"),
+                        "units": {},
+                    },
+                )
+                units_dst = tag_dst["units"]
+                for unit, records in (tag_obj.get("units") or {}).items():
+                    if not isinstance(records, list):
+                        continue
+                    unit_dst = units_dst.setdefault(unit, [])
+                    seen = {
+                        (
+                            r.get("accn"),
+                            r.get("form"),
+                            r.get("start"),
+                            r.get("end"),
+                            r.get("filed"),
+                            r.get("val"),
+                        )
+                        for r in unit_dst
+                    }
+                    for rec in records:
+                        if not isinstance(rec, dict):
+                            continue
+                        key = (
+                            rec.get("accn"),
+                            rec.get("form"),
+                            rec.get("start"),
+                            rec.get("end"),
+                            rec.get("filed"),
+                            rec.get("val"),
+                        )
+                        if key not in seen:
+                            seen.add(key)
+                            unit_dst.append(rec)
+
+    return {
+        "cik": newest.get("cik"),
+        "entityName": newest.get("entityName"),
+        "facts": merged_facts,
+    }
 
 ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
 QUARTERLY_FORMS = {"10-Q", "10-Q/A"}

@@ -14,7 +14,12 @@ from datetime import date, timedelta
 from typing import Any
 
 from src.env import RAW_DIR
-from src.fundamentals import extract_annual_financials
+from src.fundamentals import (
+    extract_annual_financials,
+    get_cik_chain,
+    load_cik_overrides,
+    merge_company_facts,
+)
 
 
 def _effective_dps(row: sqlite3.Row | dict[str, Any]) -> tuple[float | None, bool]:
@@ -432,27 +437,38 @@ def compute_etf_dividend_history(
     raw_cf_dir = RAW_DIR / "edgar" / "companyfacts"
 
     # 1. Collect split events per security from cached companyfacts JSON
+    cik_overrides = load_cik_overrides()
     cik_map = {
         r["security_id"]: r["cik"]
         for r in conn.execute(
             "SELECT security_id, cik FROM securities WHERE cik IS NOT NULL AND cik != ''"
         ).fetchall()
     }
-    splits_by_cik: dict[str, list[tuple[str, float]]] = {}
+    splits_by_chain: dict[tuple[str, ...], list[tuple[str, float]]] = {}
     sec_splits: dict[str, list[tuple[str, float]]] = {}
     for sec_id, cik in cik_map.items():
-        if cik not in splits_by_cik:
-            p = raw_cf_dir / f"CIK{cik}.json"
-            if p.is_file():
+        cik_chain = get_cik_chain(sec_id, cik, cik_overrides)
+        if not cik_chain:
+            continue
+        if cik_chain not in splits_by_chain:
+            payloads: list[dict[str, Any]] = []
+            for c in cik_chain:
+                p = raw_cf_dir / f"CIK{c}.json"
+                if p.is_file():
+                    try:
+                        payloads.append(json.loads(p.read_text(encoding="utf-8")))
+                    except Exception:  # noqa: BLE001
+                        continue
+            if payloads:
                 try:
-                    _, sp = extract_annual_financials(json.loads(p.read_text(encoding="utf-8")))
-                    splits_by_cik[cik] = sp
+                    _, sp = extract_annual_financials(merge_company_facts(payloads))
+                    splits_by_chain[cik_chain] = sp
                 except Exception:  # noqa: BLE001
-                    splits_by_cik[cik] = []
+                    splits_by_chain[cik_chain] = []
             else:
-                splits_by_cik[cik] = []
-        if splits_by_cik[cik]:
-            sec_splits[sec_id] = splits_by_cik[cik]
+                splits_by_chain[cik_chain] = []
+        if splits_by_chain[cik_chain]:
+            sec_splits[sec_id] = splits_by_chain[cik_chain]
 
     # 2. Identify the first reporting date reflecting each split via quarter_prices jumps
     prices_by_sec: dict[str, list[tuple[str, float]]] = defaultdict(list)

@@ -1,0 +1,58 @@
+{
+  "XOM": {
+    "cik": "0002115436",
+    "legacy_ciks": ["0000034088"],
+    "note": "Holding company reorganization to ExxonMobil Holdings Corp (predecessor Exxon Mobil Corp CIK 0000034088)"
+  },
+  "BLK": {
+    "cik": "0002012383",
+    "legacy_ciks": ["0001364742"],
+    "note": "Holding company reorganization to BlackRock, Inc. (predecessor BlackRock Finance, Inc. CIK 0001364742)"
+  },
+  "NWE": {
+    "cik": "0001993004",
+    "legacy_ciks": ["0000073088"],
+    "note": "Holding company reorganization to NorthWestern Energy Group, Inc. (predecessor NorthWestern Corp CIK 0000073088)"
+  },
+  "NAVI": {
+    "cik": "0002152623",
+    "legacy_ciks": ["0001593538"],
+    "note": "Holding company reorganization to Navient Holdings, Inc. (predecessor Navient LLC CIK 0001593538)"
+  },
+  "KVUE": {
+    "cik": "0001944048",
+    "note": "Kenvue Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "WBD": {
+    "cik": "0001437107",
+    "note": "Warner Bros. Discovery, Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "EA": {
+    "cik": "0000712515",
+    "note": "Electronic Arts Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "AVB": {
+    "cik": "0000915912",
+    "note": "AvalonBay Communities, Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "WBS": {
+    "cik": "0000801337",
+    "note": "Webster Financial Corp. (not present in current live SEC company_tickers.json)"
+  },
+  "ATKR": {
+    "cik": "0001666138",
+    "note": "Atkore Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "LEG": {
+    "cik": "0000058492",
+    "note": "Leggett & Platt, Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "HOLX": {
+    "cik": "0000859737",
+    "note": "Hologic, Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "FDP": {
+    "cik": "0001047340",
+    "note": "Fresh Del Monte Produce Inc. (not present in current live SEC company_tickers.json)"
+  }
+}
