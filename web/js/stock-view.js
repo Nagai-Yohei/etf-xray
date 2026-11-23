@@ -104,7 +104,13 @@ function buildTable(headers, rows, compact = false) {
   );
 }
 
-export async function renderStockView(root, securityId, fallbackEtfId) {
+export async function renderStockView(
+  root,
+  securityId,
+  fallbackEtfId,
+  setTopbarContext = null,
+  etfMetaList = []
+) {
   destroyAllCharts();
   clearNode(root);
   root.appendChild(el("div", { className: "loading-box", text: `Loading ${securityId}...` }));
@@ -115,6 +121,16 @@ export async function renderStockView(root, securityId, fallbackEtfId) {
   const annual = detail.annual || [];
   const annualDesc = [...annual].reverse();
   const quarterly = detail.quarterly || [];
+
+  const displayTicker = detail.ticker || detail.security_id;
+  document.title = `${displayTicker} — ${detail.name} | ETF X-Ray`;
+  if (typeof setTopbarContext === "function") {
+    setTopbarContext({
+      ticker: displayTicker,
+      name: detail.name,
+      priceText: fmtPrice(m.latest_price),
+    });
+  }
 
   const etfIds = Object.keys(detail.etf_history || {});
   const primaryEtf = detail.current_etfs?.[0] || etfIds[0] || fallbackEtfId || "SCHD";
@@ -161,6 +177,7 @@ export async function renderStockView(root, securityId, fallbackEtfId) {
       eqRatio: true,
     },
     bsRightMode: "shares", // shares | health
+    etfTableFilter: "ALL",
   };
 
   clearNode(root);
@@ -1434,7 +1451,7 @@ export async function renderStockView(root, securityId, fallbackEtfId) {
     }
 
     // =========================================================================
-    // 6. ETF Ownership History
+    // 6. ETF Ownership History (Multi-ETF)
     // =========================================================================
     if (state.activeTab === "all" || state.activeTab === "etf") {
       const card = el("section", { className: "card" });
@@ -1443,71 +1460,148 @@ export async function renderStockView(root, securityId, fallbackEtfId) {
           el("h2", { className: "card-title", text: "ETF Ownership History & Quarter-End Price" }),
           el("span", {
             className: "text-muted",
-            text: `Observed across ${detail.prices?.length || 0} quarter-end reports`,
+            text: `Tracked across ${etfIds.length} ETF(s) · ${detail.prices?.length || 0} implied price points`,
           }),
         ])
       );
       const body = el("div", { className: "card-body" });
 
-      const histSeries = detail.etf_history?.[primaryEtf] || [];
-      if (showCharts && histSeries.length > 0) {
-        const c1 = el("canvas", { ariaLabel: "ETF weight and quarter-end price chart" });
-        body.appendChild(el("div", { className: "chart-box" }, [c1]));
+      // 全 ETF の基準日タイムラインを統合（複数 ETF で四半期ズレを相互補完）
+      const allDatesSet = new Set((detail.prices || []).map((p) => p.as_of));
+      const weightLookup = {};
+      const flatRows = [];
+      for (const eid of etfIds) {
+        weightLookup[eid] = new Map();
+        for (const row of detail.etf_history?.[eid] || []) {
+          allDatesSet.add(row.as_of);
+          weightLookup[eid].set(row.as_of, +(row.weight * 100).toFixed(2));
+          flatRows.push({ etf_id: eid, ...row });
+        }
+      }
+      const allDates = [...allDatesSet].sort();
+      const priceMap = new Map((detail.prices || []).map((p) => [p.as_of, p.price_usd]));
+      const etfColors = [PALETTE.blue, PALETTE.amber, PALETTE.violet, PALETTE.rose, PALETTE.indigo];
 
-        const priceMap = new Map((detail.prices || []).map((p) => [p.as_of, p.price_usd]));
+      if (showCharts && allDates.length > 0) {
+        const c1 = el("canvas", { ariaLabel: "Multi-ETF weight and implied price chart" });
+        body.appendChild(el("div", { className: "chart-box-tall" }, [c1]));
+
+        const datasets = etfIds.map((eid, i) => {
+          const color = etfColors[i % etfColors.length];
+          return {
+            label: `${eid} Weight (%)`,
+            data: allDates.map((d) => (weightLookup[eid].has(d) ? weightLookup[eid].get(d) : null)),
+            borderColor: color,
+            backgroundColor: color,
+            borderWidth: 2,
+            pointRadius: etfIds.length > 1 ? 1.5 : 2.2,
+            spanGaps: true,
+            tension: 0.15,
+            yAxisID: "y",
+          };
+        });
+
+        const priceData = allDates.map((d) => (priceMap.has(d) ? priceMap.get(d) : null));
+        const hasPrice = hasAnyValue(priceData);
+        if (hasPrice) {
+          datasets.push({
+            label: "Implied Price ($)",
+            data: priceData,
+            borderColor: PALETTE.emerald,
+            backgroundColor: PALETTE.emerald,
+            borderWidth: 2.2,
+            borderDash: etfIds.length > 1 ? [4, 3] : [],
+            pointRadius: 1.5,
+            spanGaps: true,
+            tension: 0.15,
+            yAxisID: "y1",
+          });
+        }
+
         createChart(c1, {
           type: "line",
           data: {
-            labels: histSeries.map((x) => x.as_of.slice(0, 7)),
-            datasets: [
-              {
-                label: `${primaryEtf} Weight (%)`,
-                data: histSeries.map((x) => +(x.weight * 100).toFixed(2)),
-                borderColor: PALETTE.blue,
-                backgroundColor: "rgba(37, 99, 235, 0.12)",
-                fill: true,
-                borderWidth: 2,
-                tension: 0.15,
-                yAxisID: "y",
-              },
-              {
-                label: "Implied Price ($)",
-                data: histSeries.map((x) => priceMap.get(x.as_of) ?? null),
-                borderColor: PALETTE.emerald,
-                backgroundColor: PALETTE.emerald,
-                borderWidth: 2,
-                tension: 0.15,
-                yAxisID: "y1",
-              },
-            ],
+            labels: allDates.map((d) => d.slice(0, 7)),
+            datasets,
           },
-          options: baseChartOptions(fmtAxisPct, fmtAxisUsd),
+          options: baseChartOptions(fmtAxisPct, hasPrice ? fmtAxisUsd : null),
         });
       }
 
-      if (showTables && histSeries.length > 0) {
+      if (showTables && flatRows.length > 0) {
+        const tableWrap = el("div");
+        const filterControls = el("div", { className: "chart-controls" });
+
+        function renderEtfTable() {
+          clearNode(filterControls);
+          clearNode(tableWrap);
+
+          if (etfIds.length > 1) {
+            const filterOpts = ["ALL", ...etfIds];
+            for (const opt of filterOpts) {
+              filterControls.appendChild(
+                el("button", {
+                  type: "button",
+                  className: `chip-toggle${state.etfTableFilter === opt ? " active" : ""}`,
+                  text: opt === "ALL" ? `All ETFs (${flatRows.length})` : opt,
+                  onClick: () => {
+                    state.etfTableFilter = opt;
+                    renderEtfTable();
+                  },
+                })
+              );
+            }
+          }
+
+          const filtered = flatRows
+            .filter((r) => state.etfTableFilter === "ALL" || r.etf_id === state.etfTableFilter)
+            .sort((a, b) => b.as_of.localeCompare(a.as_of) || a.etf_id.localeCompare(b.etf_id));
+
+          tableWrap.appendChild(
+            buildTable(
+              [
+                { label: "Quarter End", num: false },
+                { label: "ETF", num: false },
+                { label: "Rank", num: true },
+                { label: "Weight", num: true },
+                { label: "Shares Held", num: true },
+                { label: "Market Value", num: true },
+                { label: "Implied Price", num: true },
+              ],
+              filtered.map((x) => [
+                x.as_of,
+                x.etf_id,
+                `#${x.rank}`,
+                fmtPct(x.weight, 2),
+                fmtInt(x.shares),
+                fmtUsdCompact(x.value_usd),
+                x.shares > 0 ? fmtPrice(x.value_usd / x.shares) : "—",
+              ]),
+              compactTables
+            )
+          );
+        }
+
+        if (etfIds.length > 1) {
+          body.appendChild(filterControls);
+        }
+        body.appendChild(tableWrap);
+        renderEtfTable();
+      }
+
+      // ETF ごとのデータ収録開始時期を明記（収録期間差による誤解を防止）
+      if (etfIds.length > 0 && etfMetaList.length > 0) {
+        const metaById = new Map(etfMetaList.map((e) => [e.etf_id, e]));
+        const covParts = etfIds
+          .map((eid) => {
+            const em = metaById.get(eid);
+            return em ? `${eid} (${em.first_as_of.slice(0, 7)}–${em.latest_as_of.slice(0, 7)})` : eid;
+          });
         body.appendChild(
-          buildTable(
-            [
-              { label: "Quarter End", num: false },
-              { label: "ETF", num: false },
-              { label: "Rank", num: true },
-              { label: "Weight", num: true },
-              { label: "Shares Held", num: true },
-              { label: "Market Value", num: true },
-              { label: "Implied Price", num: true },
-            ],
-            [...histSeries].reverse().map((x) => [
-              x.as_of,
-              primaryEtf,
-              `#${x.rank}`,
-              fmtPct(x.weight, 2),
-              fmtInt(x.shares),
-              fmtUsdCompact(x.value_usd),
-              x.shares > 0 ? fmtPrice(x.value_usd / x.shares) : "—",
-            ]),
-            compactTables
-          )
+          el("p", {
+            className: "section-note",
+            text: `Dataset coverage: ${covParts.join(", ")}. Dates prior to a fund's coverage start reflect available filing history rather than exclusion.`,
+          })
         );
       }
 

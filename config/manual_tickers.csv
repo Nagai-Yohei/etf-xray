@@ -81,3 +81,121 @@ Waddell & Reed Financial Inc,,WDR,
 Webster Financial Corp,,WBS,
 Wyndham Destinations Inc,,WYND,
 PartnerRe Ltd.,,PRE,2016年にEXORが買収（SEC一覧では優先株PREJFが返るため上書き）
+Independent Bank Group Inc,45384B106,IBTX,Independent Bank Corp (INDB) との社名衝突回避（2025年買収）
+Vector Group Ltd,92240M108,VGR,2024年JTが買収（スピンオフDOUGとの区別）
+BB&T Corp,054937107,BBT.OLD,2019年SunTrustと合併しTruist (TFC)へ（現BBTとの再利用衝突回避）
+ALLETE Inc,018522300,ALE,非公開化により上場廃止
+Kennedy-Wilson Holdings Inc,489398107,KW,上場廃止
+ProAssurance Corp,74267C106,PRA,買収により上場廃止
+NorthWestern Corp,668074305,NWE,持株会社再編
+Avangrid Inc,05351W103,AGR,2024年Iberdrolaが完全子会社化
+National Instruments Corp,636518102,NATI,2023年Emersonが買収
+Pioneer Natural Resources Co,723787107,PXD,2024年Exxon Mobilが買収
+Kenvue Inc,49177J102,KVUE,CUSIP指定で解決
+T-Mobile US Inc Rights,872590112,TMUSR,2020年6月のライツ（普通株TMUS 872590104と区別）
+CRH PLC,G25508105,CRH,CUSIP指定で解決
+NXP Semiconductors NV,N6596X109,NXPI,CUSIP指定で解決
+Warner Bros Discovery Inc,934423104,WBD,CUSIP指定で解決
+Electronic Arts Inc,285512109,EA,CUSIP指定で解決
+CNH Industrial NV,N20944109,CNH,CUSIP指定で解決
+AvalonBay Communities Inc,053484101,AVB,CUSIP指定で解決
+Cadence Bank,12740C103,CADE,CUSIP指定で解決
+Air Lease Corp,00912X302,AL,CUSIP指定で解決
+Hologic Inc,436440101,HOLX,CUSIP指定で解決（CVRと区別）
+Sealed Air Corp,81211K100,SEE,CUSIP指定で解決
+Atkore Inc,047649108,ATKR,CUSIP指定で解決
+Hillenbrand Inc,431571108,HI,CUSIP指定で解決
+CSG Systems International Inc,126349109,CSGS,CUSIP指定で解決
+Select Medical Holdings Corp,81619Q105,SEM,CUSIP指定で解決
+Fresh Del Monte Produce Inc,G36738105,FDP,CUSIP指定で解決
+Ardagh Metal Packaging SA,L02235106,AMBP,CUSIP指定で解決
+Discovery Inc Class A,25470F104,DISCA,CUSIP指定（Series A）
+Discovery Inc Class C,25470F302,DISCK,CUSIP指定（Series C）
+SunTrust Banks Inc,867914103,STI,2019年Truistへ合併
+Activision Blizzard Inc,00507V109,ATVI,2023年Microsoftが買収
+Twitter Inc,90184L102,TWTR,2022年非公開化
+IHS Markit Ltd,G47567105,INFO,2022年S&P Globalと合併
+FleetCor Technologies Inc,339041105,CPAY,2024年Corpay Incへ社名変更
+Cerner Corp,156782104,CERN,2022年Oracleが買収
+Allergan PLC,G0177J108,AGN,2020年AbbVieが買収
+Clearway Energy Inc. Class A,,CWEN.A,Vanguard旧書類クラスA区別
+Clearway Energy Inc.,,CWEN,Vanguard旧書類クラスC区別
+Molex Inc. Class A,,MOLXA,Vanguard旧書類クラスA区別
+Berkshire Hathaway Inc. Class A,,BRK.A,Vanguard旧書類クラスA区別
+Berkshire Hathaway Inc. Class B,,BRK.B,Vanguard旧書類クラスB区別
+Alphabet Inc. Class A,,GOOGL,Vanguard旧書類クラスA区別
+Alphabet Inc. Class C,,GOOG,Vanguard旧書類クラスC区別
+Alphabet Inc.,,GOOG,Vanguard旧書類クラスC（クラス表記省略時）
+Google Inc. Class A,,GOOGL,2015年Alphabetへ再編（クラスA）
+Google Inc. Class C,,GOOG,2015年Alphabetへ再編（クラスC）
+Google Inc.,,GOOG,2014年クラスC分割直後（表記省略時）
+Fox Corp. Class A,,FOXA,Vanguard旧書類クラスA区別
+Fox Corp. Class B,,FOX,Vanguard旧書類クラスB区別
+Twenty-First Century Fox Inc. Class A,,FOXA,Vanguard旧書類クラスA
+Twenty-First Century Fox Inc.,,FOX,Vanguard旧書類クラスB
+News Corp. Class A,,NWSA,Vanguard旧書類クラスA区別
+News Corp. Class B,,NWS,Vanguard旧書類クラスB区別
+Lennar Corp. Class A,,LEN,Vanguard旧書類クラスA区別
+Lennar Corp. Class B,,LEN.B,Vanguard旧書類クラスB区別
+Under Armour Inc. Class A,,UAA,Vanguard旧書類クラスA区別
+Under Armour Inc. Class C,,UA,Vanguard旧書類クラスC区別
+Under Armour Inc.,,UA,Vanguard旧書類クラスC（表記省略時）
+Comcast Corp. Class A,,CMCSA,Vanguard旧書類クラスA区別
+Comcast Corp.,,CMCSK,Vanguard旧書類Class A Special（2015年統合）
+Comcast Corp. Class A Special Shares,,CMCSK,Vanguard旧書類Class A Special
+Comcast Corp. Special Class A,,CMCSK,Vanguard旧書類Class A Special
+Discovery Communications Inc. Class A,,DISCA,Vanguard旧書類Series A
+Discovery Communications Inc.,,DISCK,Vanguard旧書類Series C
+Discovery Inc. Class A,,DISCA,Vanguard旧書類Series A
+Discovery Inc.,,DISCK,Vanguard旧書類Series C
+Pentair Inc.,,PNR.OLD,2012年スイス籍Pentair Ltd再編時の旧法人区別
+Facebook Inc. Class A,,META,2021年Meta Platformsへ社名変更
+Adobe Systems Inc.,,ADBE,2018年Adobe Incへ社名変更
+Priceline Group Inc.,,BKNG,2018年Booking Holdingsへ社名変更
+priceline.com Inc.,,BKNG,2014年Priceline Groupへ社名変更
+CVS Caremark Corp.,,CVS,2014年CVS Healthへ社名変更
+Biogen Idec Inc.,,BIIB,2015年Biogen Incへ社名変更
+Hewlett-Packard Co.,,HPQ,2015年HP Incへ再編
+Dominion Resources Inc.,,D,2017年Dominion Energyへ社名変更
+Fisery Inc.,,FISV,Vanguard 2019-06書類のFiserv誤植吸収
+FleetCor Technologies Inc.,,CPAY,2024年Corpay Incへ社名変更
+Freeport-McMoRan Copper & Gold Inc.,,FCX,2014年Freeport-McMoRan Incへ社名変更
+Delphi Automotive plc,,APTV,2017年Aptiv plcへ社名変更
+ACE Ltd.,,CB,2016年Chubb買収・社名変更（存続法人CIKは旧ACE）
+Chubb Corp.,,CB.OLD,2016年ACE Ltdに買収され上場廃止（現Chubb Ltdと区別）
+HCA Holdings Inc.,,HCA,2017年HCA Healthcareへ社名変更
+Avago Technologies Ltd. Class A,,AVGO,2016年Broadcom買収・社名変更（存続法人CIKは旧Avago）
+Avago Technologies Ltd.,,AVGO,2016年Broadcom買収・社名変更（存続法人CIKは旧Avago）
+Broadcom Corp. Class A,,BRCM,2016年Avagoに買収され上場廃止（現Broadcom Inc=AVGOと区別）
+Anthem Inc.,,ELV,2022年Elevance Healthへ社名変更
+WellPoint Inc.,,ELV,2014年Anthemへ社名変更
+Kraft Foods Inc.,,MDLZ,2012年Mondelez Internationalへ社名変更
+Kraft Foods Group Inc.,,KHC,2015年Heinzと合併しKraft Heinzへ
+BB&T Corp.,,BBT.OLD,2019年SunTrustと合併しTruistへ
+EI du Pont de Nemours & Co.,,DD,Vanguard旧書類表記（ピリオドなし）
+Allergan plc,,AGN,2020年AbbVieが買収
+Actavis plc,,ACT,2015年Allergan plcへ社名変更
+Time Warner Inc.,,TWX,2018年AT&Tが買収
+Aetna Inc.,,AET,2018年CVS Healthが買収
+Activision Blizzard Inc.,,ATVI,2023年Microsoftが買収
+Express Scripts Holding Co.,,ESRX,2018年Cignaが買収
+Monsanto Co.,,MON,2018年Bayerが買収
+Time Warner Cable Inc.,,TWC,2016年Charter Communicationsが買収
+Anadarko Petroleum Corp.,,APC,2019年Occidental Petroleumが買収
+EMC Corp.,,EMC,2016年Dellが買収
+Red Hat Inc.,,RHT,2019年IBMが買収
+Yahoo! Inc.,,YHOO,2017年Verizonが事業買収
+SunTrust Banks Inc.,,STI,2019年Truistへ合併
+Concho Resources Inc.,,CXO,2021年ConocoPhillipsが買収
+DIRECTV,,DTV,2015年AT&Tが買収
+Twitter Inc.,,TWTR,2022年非公開化
+Covidien plc,,COV,2015年Medtronicが買収
+Cerner Corp.,,CERN,2022年Oracleが買収
+IHS Markit Ltd.,,INFO,2022年S&P Globalと合併
+Rockwell Collins Inc.,,COL,2018年United Technologiesが買収
+Spectra Energy Corp.,,SE,2017年Enbridgeが買収
+Total System Services Inc.,,TSS,2019年Global Paymentsが買収
+Andeavor,,ANDV,2018年Marathon Petroleumが買収
+CBS Corp. Class B,,CBS,2019年Viacomと合併
+L3 Technologies Inc.,,LLL,2019年Harrisと合併しL3Harrisへ
+L-3 Communications Holdings Inc.,,LLL,2016年L3 Technologiesへ社名変更

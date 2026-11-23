@@ -17,6 +17,7 @@ from typing import Any
 
 from src.adapters.nport import FilingHoldings, fetch_etf_nport_filings
 from src.adapters.schwab_legacy import fetch_schwab_legacy_filings
+from src.adapters.vanguard_legacy import fetch_vanguard_legacy_filings
 from src.db import init_db
 from src.edgar import EdgarClient
 from src.env import CONFIG_DIR, DB_PATH
@@ -43,6 +44,8 @@ def fetch_etf_filings(client: EdgarClient, etf_cfg: dict[str, Any]) -> list[Fili
     legacy_name = etf_cfg.get("legacy_adapter")
     if legacy_name == "schwab_legacy":
         filings.extend(fetch_schwab_legacy_filings(client, etf_cfg))
+    elif legacy_name == "vanguard_legacy":
+        filings.extend(fetch_vanguard_legacy_filings(client, etf_cfg))
 
     nport_filings = fetch_etf_nport_filings(client, etf_cfg)
 
@@ -403,6 +406,22 @@ def main() -> int:
                     f"(unresolved tickers={len(unresolved)})"
                 )
                 save_etf_and_holdings(conn, cfg, filings, resolved_by_as_of, catalog)
+
+            # どの ETF にも属さなくなった孤立 securities を子テーブルごとクリーンアップ
+            orphan_sql = """
+                SELECT security_id FROM securities
+                WHERE security_id NOT IN (SELECT DISTINCT security_id FROM etf_holdings)
+            """
+            for child_tbl in (
+                "stock_metrics",
+                "quarter_prices",
+                "financials_ttm",
+                "financials_quarterly",
+                "financials_annual",
+            ):
+                conn.execute(f"DELETE FROM {child_tbl} WHERE security_id IN ({orphan_sql})")
+            conn.execute(f"DELETE FROM securities WHERE security_id IN ({orphan_sql})")
+            conn.commit()
 
         if not args.only_export and not args.skip_xbrl:
             print("[2/4] Updating SEC XBRL fundamentals...")

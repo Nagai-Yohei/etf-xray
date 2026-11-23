@@ -12,5 +12,49 @@
     "fiscal_year_end_month": 8,
     "legacy_adapter": "schwab_legacy",
     "active": true
+  },
+  {
+    "etf_id": "HDV",
+    "name": "iShares Core High Dividend ETF",
+    "issuer": "BlackRock (iShares)",
+    "cik": "0001100663",
+    "series_id": "S000031844",
+    "series_name_patterns": [
+      "iShares Core High Dividend ETF"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 4,
+    "legacy_adapter": null,
+    "active": true
+  },
+  {
+    "etf_id": "VYM",
+    "name": "Vanguard High Dividend Yield ETF",
+    "issuer": "Vanguard",
+    "cik": "0001004655",
+    "series_id": "S000014011",
+    "series_name_patterns": [
+      "VANGUARD HIGH DIVIDEND YIELD INDEX FUND"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 10,
+    "legacy_adapter": "vanguard_legacy",
+    "legacy_fund_title": "High Dividend Yield Index Fund",
+    "active": true
+  },
+  {
+    "etf_id": "VOO",
+    "name": "Vanguard S&P 500 ETF",
+    "issuer": "Vanguard",
+    "cik": "0000036405",
+    "series_id": "S000002839",
+    "series_name_patterns": [
+      "VANGUARD 500 INDEX FUND"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 12,
+    "legacy_adapter": "vanguard_legacy",
+    "legacy_fund_title": "500 Index Fund",
+    "active": true
   }
 ]

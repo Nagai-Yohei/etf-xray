@@ -354,7 +354,10 @@ def resolve_all_filings(
     figi.resolve_batch(figi_queries)
 
     # 2. パス 1: CUSIP / ISIN を持つ提出（N-PORT）から社名 → (ticker, cusip, isin) の名寄せ辞書を構築
+    #    複数ティッカーが同一正規化社名に衝突する銘柄（例: GOOG/GOOGL, FOX/FOXA, BRK.A/BRK.B, CWEN/CWEN.A）は
+    #    誤名寄せを防ぐため曖昧キーとして除外する
     nport_name_bridge: dict[str, tuple[str, str | None, str | None]] = {}
+    nport_name_tickers: dict[str, set[str]] = {}
     for filing in sorted(filings, key=lambda f: f.as_of, reverse=True):
         for h in filing.holdings:
             if not h.cusip and not h.isin:
@@ -372,8 +375,14 @@ def resolve_all_filings(
             if ticker:
                 for strip_corp in (False, True):
                     nk = normalize_company_name(h.reported_name, strip_corp=strip_corp)
-                    if nk and nk not in nport_name_bridge:
+                    if not nk:
+                        continue
+                    nport_name_tickers.setdefault(nk, set()).add(ticker)
+                    if nk not in nport_name_bridge:
                         nport_name_bridge[nk] = (ticker, h.cusip, h.isin)
+    for nk, tset in nport_name_tickers.items():
+        if len(tset) > 1:
+            nport_name_bridge.pop(nk, None)
 
     # 3. パス 2: 全基準日の全保有銘柄を優先順位に従って解決
     resolved_by_as_of: dict[str, list[ResolvedHolding]] = {}
@@ -403,41 +412,67 @@ def resolve_all_filings(
                     ticker = figi_ticker
                     source = "openfigi"
 
-            # 優先 3: 旧書類の名寄せ（N-PORT 確定銘柄の正規化社名からの引継ぎ）
-            if ticker is None:
-                for strip_class in (False, True):
-                    for strip_corp in (False, True):
-                        nk = normalize_company_name(
-                            h.reported_name, strip_corp=strip_corp, strip_class=strip_class
-                        )
-                        if nk in nport_name_bridge:
-                            b_ticker, b_cusip, b_isin = nport_name_bridge[nk]
-                            ticker = b_ticker
-                            cusip = cusip or b_cusip
-                            isin = isin or b_isin
-                            source = "legacy_bridge"
-                            break
-                    if ticker is not None:
+            # 優先 3a: 旧書類の完全一致手動オーバーライド（同一社名・別クラス/旧法人の厳密区別）
+            if ticker is None and not cusip and not isin:
+                low = h.reported_name.lower()
+                if low in manual_exact_name:
+                    ticker = manual_exact_name[low]
+                    source = "manual_name"
+
+            # 優先 3b: 旧書類の名寄せ（株式クラス一致を優先）
+            if ticker is None and not cusip and not isin:
+                for strip_corp in (False, True):
+                    nk = normalize_company_name(
+                        h.reported_name, strip_corp=strip_corp, strip_class=False
+                    )
+                    if nk in nport_name_bridge:
+                        b_ticker, b_cusip, b_isin = nport_name_bridge[nk]
+                        ticker = b_ticker
+                        cusip = cusip or b_cusip
+                        isin = isin or b_isin
+                        source = "legacy_bridge"
                         break
 
-            # 優先 4: manual_tickers.csv（名前指定）
+            # 優先 4a: manual_tickers.csv（名前指定・株式クラス一致）
             if ticker is None:
                 low = h.reported_name.lower()
                 if low in manual_exact_name:
                     ticker = manual_exact_name[low]
                     source = "manual_name"
                 else:
-                    for strip_class in (False, True):
-                        for strip_corp in (False, True):
-                            nk = normalize_company_name(
-                                h.reported_name, strip_corp=strip_corp, strip_class=strip_class
-                            )
-                            if nk in manual_norm_name:
-                                ticker = manual_norm_name[nk]
-                                source = "manual_name"
-                                break
-                        if ticker is not None:
+                    for strip_corp in (False, True):
+                        nk = normalize_company_name(
+                            h.reported_name, strip_corp=strip_corp, strip_class=False
+                        )
+                        if nk in manual_norm_name:
+                            ticker = manual_norm_name[nk]
+                            source = "manual_name"
                             break
+
+            # 優先 3c: 旧書類の名寄せ（単一クラス銘柄の "Class A" 表記ゆれ吸収）
+            if ticker is None and not cusip and not isin:
+                for strip_corp in (False, True):
+                    nk = normalize_company_name(
+                        h.reported_name, strip_corp=strip_corp, strip_class=True
+                    )
+                    if nk in nport_name_bridge:
+                        b_ticker, b_cusip, b_isin = nport_name_bridge[nk]
+                        ticker = b_ticker
+                        cusip = cusip or b_cusip
+                        isin = isin or b_isin
+                        source = "legacy_bridge"
+                        break
+
+            # 優先 4b: manual_tickers.csv（名前指定・クラス除去フォールバック）
+            if ticker is None:
+                for strip_corp in (False, True):
+                    nk = normalize_company_name(
+                        h.reported_name, strip_corp=strip_corp, strip_class=True
+                    )
+                    if nk in manual_norm_name:
+                        ticker = manual_norm_name[nk]
+                        source = "manual_name"
+                        break
 
             # 優先 5: SEC company_tickers.json（社名正規化マッチ）
             if ticker is None:

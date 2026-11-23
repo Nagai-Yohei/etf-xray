@@ -111,7 +111,11 @@ def parse_nport_xml(
             name = _find_child_text(item, "title")
 
         cusip_raw = _find_child_text(item, "cusip").strip().upper()
-        cusip = None if (not cusip_raw or cusip_raw == "000000000") else cusip_raw
+        cusip = (
+            cusip_raw
+            if (len(cusip_raw) == 9 and cusip_raw.isalnum() and cusip_raw != "000000000")
+            else None
+        )
 
         isin: str | None = None
         identifiers = _find_child(item, "identifiers")
@@ -119,7 +123,7 @@ def parse_nport_xml(
             for id_node in identifiers:
                 if _local_name(id_node.tag) == "isin":
                     val = (id_node.get("value") or "").strip().upper()
-                    if val and val != "000000000000":
+                    if len(val) == 12 and val.isalnum() and val != "000000000000":
                         isin = val
                         break
 

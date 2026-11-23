@@ -14,7 +14,27 @@ const rootEl = document.getElementById("app-root");
 const etfSwitcher = document.getElementById("etf-switcher");
 const searchInput = document.getElementById("global-search-input");
 const searchDropdown = document.getElementById("global-search-results");
+const topbarContext = document.getElementById("topbar-context");
 const footerEl = document.getElementById("app-footer");
+
+function setTopbarContext(info) {
+  if (!topbarContext) return;
+  clearNode(topbarContext);
+  if (!info) {
+    topbarContext.classList.add("hidden");
+    return;
+  }
+  topbarContext.appendChild(el("span", { className: "ticker-pill", text: info.ticker }));
+  topbarContext.appendChild(el("span", { className: "topbar-context-name", text: info.name }));
+  topbarContext.title = `${info.ticker} — ${info.name} (click to scroll to top)`;
+  topbarContext.classList.remove("hidden");
+}
+
+if (topbarContext) {
+  topbarContext.addEventListener("click", () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+}
 
 let metaData = null;
 let stocksList = [];
@@ -134,7 +154,7 @@ async function handleRoute() {
   try {
     if (parts[0] === "stock" && parts[1]) {
       const secId = decodeURIComponent(parts[1]);
-      await renderStockView(rootEl, secId, currentEtfId);
+      await renderStockView(rootEl, secId, currentEtfId, setTopbarContext, metaData?.etfs || []);
       window.scrollTo({ top: 0 });
     } else {
       const etfId = parts[0] === "etf" && parts[1] ? decodeURIComponent(parts[1]) : currentEtfId;
@@ -142,9 +162,12 @@ async function handleRoute() {
       const targetEtf = known ? etfId : metaData.etfs[0].etf_id;
       currentEtfId = targetEtf;
       etfSwitcher.value = targetEtf;
+      setTopbarContext(null);
+      document.title = `${targetEtf} — ETF X-Ray`;
       cleanupView = await renderEtfView(rootEl, targetEtf, params.get("as_of"), navigate);
     }
   } catch (err) {
+    setTopbarContext(null);
     clearNode(rootEl);
     rootEl.appendChild(
       el("div", {
@@ -176,12 +199,12 @@ async function init() {
       navigate(`#/etf/${encodeURIComponent(currentEtfId)}`);
     });
 
-    if (footerEl && meta.generated_at) {
+    if (footerEl && meta.disclaimer) {
       clearNode(footerEl);
       footerEl.appendChild(
         el("p", {
           className: "footer-note",
-          text: `${meta.disclaimer} · Built ${meta.generated_at} · ${meta.stock_count} tracked securities.`,
+          text: meta.disclaimer,
         })
       );
     }
