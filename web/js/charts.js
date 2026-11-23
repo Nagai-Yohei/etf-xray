@@ -1,0 +1,172 @@
+/**
+ * Chart.js 描画ラッパーおよび軸フォーマッタ。
+ * - ビュー切替時のメモリリーク防止のため、アクティブな Chart インスタンスを一元管理・破棄する。
+ * - 浮動小数点誤差（例: 4.800000000000001%）を防ぐため、すべての軸目盛りを丸めて整形する。
+ */
+
+const activeCharts = new Set();
+
+export function destroyAllCharts() {
+  for (const chart of activeCharts) {
+    try {
+      chart.destroy();
+    } catch {
+      // 破棄済みの場合は無視
+    }
+  }
+  activeCharts.clear();
+}
+
+export function destroyChart(chart) {
+  if (!chart) return;
+  try {
+    chart.destroy();
+  } catch {
+    // 無視
+  }
+  activeCharts.delete(chart);
+}
+
+function getChartCtor() {
+  if (typeof window.Chart !== "function") {
+    throw new Error("Chart.js failed to load from vendor/chart.umd.min.js");
+  }
+  return window.Chart;
+}
+
+export function createChart(canvas, config) {
+  const ChartCtor = getChartCtor();
+  const chart = new ChartCtor(canvas, config);
+  activeCharts.add(chart);
+  return chart;
+}
+
+export const PALETTE = {
+  blue: "#2563eb",
+  blueSoft: "rgba(37, 99, 235, 0.78)",
+  indigo: "#4f46e5",
+  indigoSoft: "rgba(79, 70, 229, 0.78)",
+  violet: "#7c3aed",
+  violetSoft: "rgba(124, 58, 237, 0.76)",
+  emerald: "#059669",
+  emeraldSoft: "rgba(5, 150, 105, 0.78)",
+  amber: "#d97706",
+  amberSoft: "rgba(217, 119, 6, 0.8)",
+  rose: "#e11d48",
+  roseSoft: "rgba(225, 29, 72, 0.78)",
+  slate: "#64748b",
+  slateSoft: "rgba(100, 116, 139, 0.65)",
+  grid: "rgba(148, 163, 184, 0.22)",
+  text: "#475569",
+};
+
+export function fmtAxisNum(value, maxDecimals = 2) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  const rounded = Number(num.toFixed(maxDecimals));
+  return Object.is(rounded, -0) ? "0" : String(rounded);
+}
+
+export function fmtAxisPct(value) {
+  return `${fmtAxisNum(value, 2)}%`;
+}
+
+export function fmtAxisUsdB(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  const sign = num < 0 ? "-" : "";
+  return `${sign}$${fmtAxisNum(Math.abs(num), 2)}B`;
+}
+
+export function fmtAxisUsdM(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  const sign = num < 0 ? "-" : "";
+  return `${sign}$${fmtAxisNum(Math.abs(num), 1)}M`;
+}
+
+export function fmtAxisUsd(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  const sign = num < 0 ? "-" : "";
+  return `${sign}$${fmtAxisNum(Math.abs(num), 2)}`;
+}
+
+export function fmtAxisSignedInt(value) {
+  const num = Math.round(Number(value));
+  if (!Number.isFinite(num)) return String(value);
+  return num > 0 ? `+${num}` : String(num);
+}
+
+export function baseChartOptions(yTickFormatter, rightYTickFormatter = null, extra = {}) {
+  const scales = {
+    x: {
+      stacked: Boolean(extra.stacked),
+      grid: { display: false },
+      ticks: { color: PALETTE.text, font: { size: 11 }, maxTicksLimit: 10 },
+    },
+    y: {
+      position: "left",
+      stacked: Boolean(extra.stacked),
+      grid: { color: PALETTE.grid },
+      ticks: {
+        color: PALETTE.text,
+        font: { size: 11 },
+        maxTicksLimit: 6,
+        callback: yTickFormatter,
+      },
+    },
+  };
+
+  if (rightYTickFormatter) {
+    scales.y1 = {
+      position: "right",
+      grid: { drawOnChartArea: false },
+      ticks: {
+        color: PALETTE.text,
+        font: { size: 11 },
+        maxTicksLimit: 6,
+        callback: rightYTickFormatter,
+      },
+    };
+  }
+
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: {
+        position: "top",
+        align: "start",
+        labels: {
+          boxWidth: 11,
+          boxHeight: 11,
+          useBorderRadius: true,
+          borderRadius: 2,
+          padding: 12,
+          color: "#334155",
+          font: { size: 12 },
+          generateLabels: (chart) => {
+            const base = window.Chart.defaults.plugins.legend.labels.generateLabels(chart);
+            for (const item of base) {
+              // 破線データセット（borderDash）の凡例枠線がギザギザに見えるのを防ぐ
+              item.lineDash = [];
+              item.lineWidth = 0;
+            }
+            return base;
+          },
+        },
+      },
+      tooltip: {
+        backgroundColor: "#0f172a",
+        titleColor: "#f8fafc",
+        bodyColor: "#e2e8f0",
+        padding: 10,
+        cornerRadius: 6,
+        ...(extra.tooltip || {}),
+      },
+    },
+    scales,
+  };
+}

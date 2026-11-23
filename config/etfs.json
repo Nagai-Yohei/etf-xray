@@ -1,0 +1,16 @@
+[
+  {
+    "etf_id": "SCHD",
+    "name": "Schwab U.S. Dividend Equity ETF",
+    "issuer": "Charles Schwab",
+    "cik": "0001454889",
+    "series_id": "S000034163",
+    "series_name_patterns": [
+      "Schwab U.S. Dividend Equity ETF"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 8,
+    "legacy_adapter": "schwab_legacy",
+    "active": true
+  }
+]

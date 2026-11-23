@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ETF X-Ray — U.S. ETF Holdings &amp; SEC Fundamentals</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <div class="brand-group">
+        <a href="#/etf/SCHD" class="brand" id="brand-link">
+          <span class="brand-mark">X</span>
+          <span class="brand-text">ETF X-Ray</span>
+        </a>
+        <label class="etf-switcher-wrap" for="etf-switcher">
+          <span class="sr-only">Select ETF</span>
+          <select id="etf-switcher" class="select-control" aria-label="Select ETF"></select>
+        </label>
+      </div>
+
+      <div class="search-wrap" id="global-search-wrap">
+        <input
+          type="search"
+          id="global-search-input"
+          class="search-input"
+          placeholder="Search ticker or company (e.g. KO, AVGO, Merck)..."
+          autocomplete="off"
+          aria-label="Search stocks"
+        >
+        <div id="global-search-results" class="search-dropdown hidden" role="listbox"></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main-content" id="app-root">
+    <div class="loading-box">Loading data...</div>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner" id="app-footer">
+      <p class="footer-note">
+        Data sources: SEC EDGAR (N-PORT-P, N-CSR, N-CSRS, N-Q, 10-K/10-Q XBRL) &amp; OpenFIGI.
+        Quarter-end prices are implied from ETF holdings (Value &divide; Shares). For informational purposes only.
+      </p>
+    </div>
+  </footer>
+
+  <script src="vendor/chart.umd.min.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
