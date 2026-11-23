@@ -337,16 +337,36 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                 current_ratio = float(latest_ann["current_assets"]) / float(latest_ann["current_liabilities"])
 
         # 5-year share count change (negative indicates net buybacks)
-        sh_series = [
-            (int(str(r["fy_end"])[:4]), float(r["shares_diluted"] or r["shares_outstanding"]))
-            for r in ann_rows
-            if (r["shares_diluted"] or r["shares_outstanding"]) and float(r["shares_diluted"] or r["shares_outstanding"]) > 0
-        ]
-        if sh_series:
-            ly_s, lv_s = sh_series[-1]
-            v5_s, _ = _find_value_n_years_ago(sh_series, ly_s, 5)
-            if v5_s is not None and v5_s > 0:
-                share_change_5y = (lv_s / v5_s) - 1.0
+        # Prefer a consistent basis (diluted-to-diluted or outstanding-to-outstanding) anchored
+        # to the latest fiscal year so stale historical rows (e.g. BRK.B pre-2015) are excluded.
+        if latest_ann is not None:
+            latest_fy_yr = int(str(latest_ann["fy_end"])[:4])
+            sh_dil_series = [
+                (int(str(r["fy_end"])[:4]), float(r["shares_diluted"]))
+                for r in ann_rows
+                if r["shares_diluted"] is not None and float(r["shares_diluted"]) > 0
+            ]
+            sh_out_series = [
+                (int(str(r["fy_end"])[:4]), float(r["shares_outstanding"]))
+                for r in ann_rows
+                if r["shares_outstanding"] is not None and float(r["shares_outstanding"]) > 0
+            ]
+            sh_mixed_series = [
+                (int(str(r["fy_end"])[:4]), float(r["shares_diluted"] or r["shares_outstanding"]))
+                for r in ann_rows
+                if (r["shares_diluted"] or r["shares_outstanding"])
+                and float(r["shares_diluted"] or r["shares_outstanding"]) > 0
+            ]
+            for cand_series in (sh_dil_series, sh_out_series, sh_mixed_series):
+                if not cand_series:
+                    continue
+                ly_s, lv_s = cand_series[-1]
+                if latest_fy_yr - ly_s > 1:
+                    continue
+                v5_s, _ = _find_value_n_years_ago(cand_series, ly_s, 5)
+                if v5_s is not None and v5_s > 0:
+                    share_change_5y = (lv_s / v5_s) - 1.0
+                    break
 
         # Consecutive non-cut dividend streak & dividend/revenue CAGRs
         div_streak_years, div_streak_open, used_est_dps = _compute_dividend_streak(ann_rows)
@@ -433,6 +453,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
 def compute_etf_dividend_history(
     conn: sqlite3.Connection,
     etf_id: str,
+    splits_cache: dict[tuple[str, ...], list[tuple[str, float]]] | None = None,
 ) -> dict[str, dict[str, float | None]]:
     """Estimate annual portfolio dividends and weighted average yield across all ETF reporting dates.
 
@@ -451,7 +472,9 @@ def compute_etf_dividend_history(
             "SELECT security_id, cik FROM securities WHERE cik IS NOT NULL AND cik != ''"
         ).fetchall()
     }
-    splits_by_chain: dict[tuple[str, ...], list[tuple[str, float]]] = {}
+    splits_by_chain: dict[tuple[str, ...], list[tuple[str, float]]] = (
+        splits_cache if splits_cache is not None else {}
+    )
     sec_splits: dict[str, list[tuple[str, float]]] = {}
     for sec_id, cik in cik_map.items():
         cik_chain = get_cik_chain(sec_id, cik, cik_overrides)

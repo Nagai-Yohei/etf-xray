@@ -278,6 +278,11 @@ TAG_MAP_FLOW_USD: dict[str, list[tuple[str, str]]] = {
 # Bank revenue fallback (net interest income + noninterest income)
 BANK_NII_TAGS = [("us-gaap", "InterestIncomeExpenseNet")]
 BANK_NONINT_TAGS = [("us-gaap", "NoninterestIncome")]
+# REIT lease revenue fallback (ASC 842 rental income excluded from ASC 606 contract revenue)
+REIT_LEASE_TAGS = [
+    ("us-gaap", "OperatingLeaseLeaseIncome"),
+    ("us-gaap", "RealEstateRevenueNet"),
+]
 
 TAG_MAP_FLOW_PER_SHARE: dict[str, list[tuple[str, str]]] = {
     "eps_diluted": [
@@ -544,11 +549,28 @@ def _snap_split_ratio(ratio: float) -> float:
     return round(ratio, 4)
 
 
+def _fix_share_scale(val: float | None, ref: float | None) -> float | None:
+    """Normalize 1,000x or 1,000,000x XBRL share-count unit scale errors against a reference share count."""
+    if val is None or val <= 0 or ref is None or ref <= 0:
+        return val
+    ratio = ref / val
+    if 500_000.0 <= ratio <= 2_000_000.0:
+        return val * 1_000_000.0
+    if 500.0 <= ratio <= 2_000.0:
+        return val * 1_000.0
+    if 0.0005 <= ratio <= 0.002:
+        return val / 1_000.0
+    if 0.0000005 <= ratio <= 0.000002:
+        return val / 1_000_000.0
+    return val
+
+
 def _estimate_split_events(
     shares_recs: list[FactRecord],
     eps_recs: list[FactRecord],
     dps_decl_recs: list[FactRecord],
     dps_paid_recs: list[FactRecord],
+    shares_out_recs: list[FactRecord] | None = None,
 ) -> list[tuple[str, float]]:
     """Infer stock split events [(effective_filed, factor), ...] from overlapping 10-K comparative years.
 
@@ -557,32 +579,70 @@ def _estimate_split_events(
     are multiplied by factor, to align onto the post-effective_filed share basis.
     """
 
-    def index_by_end_and_filed(recs: list[FactRecord]) -> dict[str, dict[str, FactRecord]]:
+    def index_by_end_and_filed(
+        recs: list[FactRecord], require_annual: bool = True
+    ) -> dict[str, dict[str, FactRecord]]:
         # Keep the single highest-priority tag record for each (fy_end, filed)
         table: dict[str, dict[str, FactRecord]] = defaultdict(dict)
         for rec in recs:
-            if not _is_annual_flow(rec):
+            if require_annual and not _is_annual_flow(rec):
+                continue
+            if not require_annual and rec.start is not None:
                 continue
             cur = table[rec.end].get(rec.filed)
             if cur is None or rec.priority < cur.priority:
                 table[rec.end][rec.filed] = rec
         return table
 
-    shares_idx = index_by_end_and_filed(shares_recs)
-    eps_idx = index_by_end_and_filed(eps_recs)
-    dps_d_idx = index_by_end_and_filed(dps_decl_recs)
-    dps_p_idx = index_by_end_and_filed(dps_paid_recs)
+    shares_idx = index_by_end_and_filed(shares_recs, require_annual=True)
+    shares_out_idx = (
+        index_by_end_and_filed(shares_out_recs, require_annual=False)
+        if shares_out_recs
+        else {}
+    )
+    eps_idx = index_by_end_and_filed(eps_recs, require_annual=True)
+    dps_d_idx = index_by_end_and_filed(dps_decl_recs, require_annual=True)
+    dps_p_idx = index_by_end_and_filed(dps_paid_recs, require_annual=True)
 
-    # Collect all 10-K filing dates in ascending order
+    # Collect all 10-K filing dates across diluted shares, instant shares, and EPS in ascending order
     all_filings = sorted(
         {
             filed
-            for end_map in shares_idx.values()
+            for tbl in (shares_idx, shares_out_idx, eps_idx)
+            for end_map in tbl.values()
             for filed in end_map.keys()
         }
     )
     if len(all_filings) < 2:
         return []
+
+    def _corroborate_ratio(fy_end: str, prev_f: str, next_f: str, r_shares: float) -> float | None:
+        """Verify share ratio against inverse EPS/DPS ratio (also handling 1,000x/1,000,000x unit switches)."""
+        # Collect candidate inverse per-share ratios for this (fy_end, prev_f -> next_f)
+        inv_ratios: list[float] = []
+        e_old_rec = eps_idx.get(fy_end, {}).get(prev_f)
+        e_new_rec = eps_idx.get(fy_end, {}).get(next_f)
+        if e_old_rec and e_new_rec:
+            e_old, e_new = e_old_rec.val, e_new_rec.val
+            if e_old * e_new > 0 and abs(e_new) >= 0.05:
+                inv_ratios.append(e_old / e_new)
+        for d_idx in (dps_d_idx, dps_p_idx):
+            d_old_rec = d_idx.get(fy_end, {}).get(prev_f)
+            d_new_rec = d_idx.get(fy_end, {}).get(next_f)
+            if d_old_rec and d_new_rec and d_old_rec.val > 0 and d_new_rec.val > 0:
+                inv_ratios.append(d_old_rec.val / d_new_rec.val)
+
+        for r_ps in inv_ratios:
+            if 0.92 <= r_ps <= 1.08:
+                continue
+            if abs(r_shares / r_ps - 1.0) <= 0.08:
+                return r_shares
+            # Handle simultaneous 1,000x / 1,000,000x share unit switch in the same 10-K (e.g. OKE 2012)
+            for scale in (1_000.0, 1_000_000.0, 1e-3, 1e-6):
+                r_scaled = r_shares / scale
+                if abs(r_scaled / r_ps - 1.0) <= 0.05:
+                    return r_ps
+        return None
 
     events: list[tuple[str, float]] = []
 
@@ -592,41 +652,26 @@ def _estimate_split_events(
         next_f = all_filings[idx + 1]
 
         confirmed_ratios: list[float] = []
-        for fy_end, end_shares in shares_idx.items():
-            if prev_f not in end_shares or next_f not in end_shares:
-                continue
-            s_old = end_shares[prev_f].val
-            s_new = end_shares[next_f].val
-            if s_old <= 0 or s_new <= 0:
-                continue
-            r_shares = s_new / s_old
-            if 0.92 <= r_shares <= 1.08:
-                continue
+        candidate_ends = set(shares_idx.keys()) | set(shares_out_idx.keys())
+        for fy_end in candidate_ends:
+            matched_ratio: float | None = None
+            for sh_tbl in (shares_idx, shares_out_idx):
+                end_shares = sh_tbl.get(fy_end)
+                if not end_shares or prev_f not in end_shares or next_f not in end_shares:
+                    continue
+                s_old = end_shares[prev_f].val
+                s_new = end_shares[next_f].val
+                if s_old <= 0 or s_new <= 0:
+                    continue
+                r_shares = s_new / s_old
+                if 0.92 <= r_shares <= 1.08:
+                    continue
+                matched_ratio = _corroborate_ratio(fy_end, prev_f, next_f, r_shares)
+                if matched_ratio is not None:
+                    break
 
-            # Corroborate with inverse EPS/DPS ratio to avoid false positives from accounting or dilution shifts
-            corroborated = False
-
-            e_old_rec = eps_idx.get(fy_end, {}).get(prev_f)
-            e_new_rec = eps_idx.get(fy_end, {}).get(next_f)
-            if e_old_rec and e_new_rec:
-                e_old, e_new = e_old_rec.val, e_new_rec.val
-                if e_old * e_new > 0 and abs(e_new) >= 0.05:
-                    r_eps = e_old / e_new
-                    if abs(r_shares / r_eps - 1.0) <= 0.08:
-                        corroborated = True
-
-            if not corroborated:
-                for d_idx in (dps_d_idx, dps_p_idx):
-                    d_old_rec = d_idx.get(fy_end, {}).get(prev_f)
-                    d_new_rec = d_idx.get(fy_end, {}).get(next_f)
-                    if d_old_rec and d_new_rec and d_old_rec.val > 0 and d_new_rec.val > 0:
-                        r_dps = d_old_rec.val / d_new_rec.val
-                        if abs(r_shares / r_dps - 1.0) <= 0.08:
-                            corroborated = True
-                            break
-
-            if corroborated:
-                confirmed_ratios.append(r_shares)
+            if matched_ratio is not None:
+                confirmed_ratios.append(matched_ratio)
 
         if confirmed_ratios:
             raw_ratio = statistics.median(confirmed_ratios)
@@ -721,12 +766,20 @@ def extract_annual_financials(
         for metric, tags in TAG_MAP_FLOW_SHARES.items()
     }
 
-    # 1. Infer stock split events
+    shares_out_bs_raw = _iter_tag_records(
+        company_facts,
+        [("us-gaap", "CommonStockSharesOutstanding")],
+        ("shares",),
+        ANNUAL_FORMS,
+    )
+
+    # 1. Infer stock split events (using both diluted shares and period-end CommonStockSharesOutstanding)
     split_events = _estimate_split_events(
         shares_recs=flow_sh_raw["shares_diluted"],
         eps_recs=flow_ps_raw["eps_diluted"],
         dps_decl_recs=flow_ps_raw["dps_declared"],
         dps_paid_recs=flow_ps_raw["dps_paid"],
+        shares_out_recs=shares_out_bs_raw,
     )
 
     # 2. Pick the best annual record per fy_end for each flow metric
@@ -737,7 +790,52 @@ def extract_annual_financials(
     }
     flow_sh = {m: _select_best_annual_flow(recs) for m, recs in flow_sh_raw.items()}
 
-    # Bank revenue fallback (synthesize net interest income + noninterest income when Revenues tags are absent)
+    # Guard against partial/segment us-gaap:Revenues leaks where ASC 606 revenue is the true consolidated total
+    # (e.g. GIS 2023-2024, BLK 2022-2024, OWL 2022-2025) while preserving E&P hedge-loss years
+    rev_by_end_tag: dict[tuple[str, str], FactRecord] = {}
+    for rec in flow_usd_raw["revenue"]:
+        if not _is_annual_flow(rec):
+            continue
+        k = (rec.end, rec.tag)
+        prev_r = rev_by_end_tag.get(k)
+        if prev_r is None or _rec_recency_key(rec) > _rec_recency_key(prev_r):
+            rev_by_end_tag[k] = rec
+
+    both_rev_ends = [
+        fe
+        for fe in flow_usd["revenue"]
+        if (fe, "us-gaap:Revenues") in rev_by_end_tag
+        and (fe, "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax") in rev_by_end_tag
+    ]
+    all_plain_lt_asc = bool(both_rev_ends) and all(
+        rev_by_end_tag[(fe, "us-gaap:Revenues")].val
+        < rev_by_end_tag[(fe, "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax")].val
+        for fe in both_rev_ends
+    )
+    latest_rev_end = max(flow_usd["revenue"]) if flow_usd["revenue"] else None
+    plain_dropped_latest = (
+        latest_rev_end is not None
+        and (latest_rev_end, "us-gaap:Revenues") not in rev_by_end_tag
+    )
+    for fe in list(flow_usd["revenue"]):
+        chosen_r = flow_usd["revenue"][fe]
+        if chosen_r.tag != "us-gaap:Revenues":
+            continue
+        asc_r = rev_by_end_tag.get(
+            (fe, "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax")
+        )
+        if asc_r is None or asc_r.val <= 0:
+            continue
+        if (asc_r.filed > chosen_r.filed and asc_r.val > chosen_r.val * 1.25) or (
+            chosen_r.val > 0
+            and asc_r.val > chosen_r.val * 1.55
+            and (all_plain_lt_asc or plain_dropped_latest)
+        ):
+            flow_usd["revenue"][fe] = asc_r
+
+    # Bank revenue synthesis (net interest income + noninterest income):
+    # apply both when revenue tags are absent AND when ASC 606 RevenueFromContractWithCustomer*
+    # captures only non-interest fee income (banks exclude interest income from ASC 606).
     bank_nii = _select_best_annual_flow(
         _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), ANNUAL_FORMS)
     )
@@ -745,11 +843,18 @@ def extract_annual_financials(
         _iter_tag_records(company_facts, BANK_NONINT_TAGS, ("USD",), ANNUAL_FORMS)
     )
     for fy_end in set(bank_nii) & set(bank_nonint):
-        if fy_end not in flow_usd["revenue"]:
-            r1 = bank_nii[fy_end]
-            r2 = bank_nonint[fy_end]
+        r1 = bank_nii[fy_end]
+        r2 = bank_nonint[fy_end]
+        bank_tot = r1.val + r2.val
+        cur_rev = flow_usd["revenue"].get(fy_end)
+        use_bank = cur_rev is None or (
+            "RevenueFromContractWithCustomer" in cur_rev.tag
+            and r1.val > 0
+            and bank_tot > max(0.0, cur_rev.val) * 1.5
+        )
+        if use_bank:
             flow_usd["revenue"][fy_end] = FactRecord(
-                val=r1.val + r2.val,
+                val=bank_tot,
                 end=fy_end,
                 start=r1.start or r2.start,
                 filed=max(r1.filed, r2.filed),
@@ -757,6 +862,32 @@ def extract_annual_financials(
                 accn=r1.accn,
                 tag="synthetic:BankNII+Noninterest",
                 priority=99,
+            )
+
+    # REIT lease revenue fallback (ASC 842 rental income excluded from ASC 606 contract revenue, e.g. CPT)
+    reit_lease = _select_best_annual_flow(
+        _iter_tag_records(company_facts, REIT_LEASE_TAGS, ("USD",), ANNUAL_FORMS)
+    )
+    for fy_end, lease_r in reit_lease.items():
+        if lease_r.val <= 0:
+            continue
+        cur_rev = flow_usd["revenue"].get(fy_end)
+        if cur_rev is None:
+            flow_usd["revenue"][fy_end] = lease_r
+        elif (
+            "RevenueFromContractWithCustomer" in cur_rev.tag
+            and lease_r.val > max(0.0, cur_rev.val) * 2.0
+        ):
+            combined_val = lease_r.val + max(0.0, cur_rev.val)
+            flow_usd["revenue"][fy_end] = FactRecord(
+                val=combined_val,
+                end=fy_end,
+                start=lease_r.start,
+                filed=max(lease_r.filed, cur_rev.filed),
+                form=lease_r.form,
+                accn=lease_r.accn,
+                tag="synthetic:Lease+ASC606",
+                priority=98,
             )
 
     # Build the valid fy_end set from core PL/CF metrics (revenue / net_income / operating_cf)
@@ -819,12 +950,7 @@ def extract_annual_financials(
 
     # Period-end shares: prefer CommonStockSharesOutstanding (+/-15d), else EntityCommonStockSharesOutstanding (up to +75d)
     shares_out_bs = _select_best_instant_for_dates(
-        _iter_tag_records(
-            company_facts,
-            [("us-gaap", "CommonStockSharesOutstanding")],
-            ("shares",),
-            ANNUAL_FORMS,
-        ),
+        shares_out_bs_raw,
         filtered_ends,
         max_day_diff_before=15,
         max_day_diff_after=15,
@@ -889,7 +1015,7 @@ def extract_annual_financials(
         sh_dil_adj = (sh_dil_rec.val * sh_dil_factor) if sh_dil_rec is not None else None
         sh_out_adj = (sh_out_rec.val * sh_out_factor) if sh_out_rec is not None else None
 
-        # Correct 1,000x XBRL share-count unit scale errors (e.g. shares filed in thousands)
+        # Correct 1,000x and 1,000,000x XBRL share-count unit scale errors (e.g. shares filed in thousands/millions)
         implied_sh: float | None = None
         if (
             ni_rec is not None
@@ -898,19 +1024,13 @@ def extract_annual_financials(
             and abs(ni_rec.val) >= 1_000_000.0
         ):
             implied_sh = abs(ni_rec.val / eps_adj)
-        if sh_dil_adj is not None and sh_dil_adj > 0 and implied_sh is not None:
-            ratio_dil = implied_sh / sh_dil_adj
-            if 500.0 <= ratio_dil <= 2000.0:
-                sh_dil_adj *= 1000.0
-            elif 0.0005 <= ratio_dil <= 0.002:
-                sh_dil_adj /= 1000.0
+        sh_dil_adj = _fix_share_scale(sh_dil_adj, implied_sh)
         ref_sh_for_out = sh_dil_adj or implied_sh
-        if sh_out_adj is not None and sh_out_adj > 0 and ref_sh_for_out is not None and ref_sh_for_out > 0:
-            ratio_out = ref_sh_for_out / sh_out_adj
-            if 500.0 <= ratio_out <= 2000.0:
-                sh_out_adj *= 1000.0
-            elif 0.0005 <= ratio_out <= 0.002:
-                sh_out_adj /= 1000.0
+        sh_out_adj = _fix_share_scale(sh_out_adj, ref_sh_for_out)
+        # If EPS was absent (e.g. dual-class) and sh_dil looks 1e3x/1e6x smaller than sh_out, cross-check too
+        if implied_sh is None and sh_dil_adj is not None and sh_out_adj is not None and sh_out_adj > 0:
+            if sh_dil_adj < 100_000.0 and sh_out_adj >= 1_000_000.0:
+                sh_dil_adj = _fix_share_scale(sh_dil_adj, sh_out_adj)
 
         # Normalize CapEx, dividends paid, buybacks, and expense line items to positive magnitudes
         rev_val = rev_rec.val if rev_rec is not None else None
@@ -1008,6 +1128,16 @@ def extract_annual_financials(
                 "split_factor": rep_split_factor,
             }
         )
+
+    # Cross-year median share-scale normalization (catches isolated 1,000x / 1,000,000x unit errors
+    # on rows where EPS was absent, e.g. BRK.B 2009)
+    for field in ("shares_diluted", "shares_outstanding"):
+        vals = [r[field] for r in rows if r[field] is not None and r[field] > 0]
+        if len(vals) >= 3:
+            med = statistics.median(vals)
+            for r in rows:
+                if r[field] is not None and r[field] > 0:
+                    r[field] = _fix_share_scale(r[field], med)
 
     return rows, split_events
 
@@ -1149,14 +1279,32 @@ def extract_ttm_financials(
         return round(ann_val + cur_v - prev_v, 4)
 
     revenue_ttm = calc_ttm_usd("revenue")
-    # Bank revenue fallback when 10-Q omits standard Revenues tags
-    if target_q_end is not None and revenue_ttm == latest_ann.get("revenue") and latest_ann.get("revenue") is not None:
+    # Bank revenue synthesis for TTM when 10-Q omits Revenues or only tags ASC 606 fee income
+    if target_q_end is not None and latest_ann.get("revenue") is not None:
         q_nii = _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), QUARTERLY_FORMS)
         q_nonint = _iter_tag_records(company_facts, BANK_NONINT_TAGS, ("USD",), QUARTERLY_FORMS)
         _, cur_nii, prev_nii = _find_latest_ytd_pair(q_nii, latest_fy_start, latest_fy_end, target_q_end)
         _, cur_ni2, prev_ni2 = _find_latest_ytd_pair(q_nonint, latest_fy_start, latest_fy_end, target_q_end)
-        if None not in (cur_nii, prev_nii, cur_ni2, prev_ni2):
-            revenue_ttm = latest_ann["revenue"] + (cur_nii + cur_ni2) - (prev_nii + prev_ni2)
+        if None not in (cur_nii, prev_nii, cur_ni2, prev_ni2) and cur_nii > 0:
+            bank_cur = cur_nii + cur_ni2
+            bank_prev = prev_nii + prev_ni2
+            _, cur_r_std, prev_r_std = _find_latest_ytd_pair(
+                q_rev_recs, latest_fy_start, latest_fy_end, target_q_end
+            )
+            if cur_r_std is None or prev_r_std is None or bank_cur > max(0.0, cur_r_std) * 1.5:
+                revenue_ttm = latest_ann["revenue"] + bank_cur - bank_prev
+    # REIT lease revenue TTM fallback when 10-Q only reports ASC 606 non-lease fee revenue
+    if target_q_end is not None and latest_ann.get("revenue") is not None:
+        q_lease = _iter_tag_records(company_facts, REIT_LEASE_TAGS, ("USD",), QUARTERLY_FORMS)
+        _, cur_l, prev_l = _find_latest_ytd_pair(q_lease, latest_fy_start, latest_fy_end, target_q_end)
+        if cur_l is not None and prev_l is not None and cur_l > 0:
+            _, cur_r_std, prev_r_std = _find_latest_ytd_pair(
+                q_rev_recs, latest_fy_start, latest_fy_end, target_q_end
+            )
+            if cur_r_std is None or prev_r_std is None:
+                revenue_ttm = latest_ann["revenue"] + cur_l - prev_l
+            elif cur_l > max(0.0, cur_r_std) * 2.0:
+                revenue_ttm = latest_ann["revenue"] + (cur_l + cur_r_std) - (prev_l + prev_r_std)
     op_inc_ttm = calc_ttm_usd("operating_income")
     net_inc_ttm = calc_ttm_usd("net_income")
     ocf_ttm = calc_ttm_usd("operating_cf")
@@ -1216,14 +1364,9 @@ def extract_ttm_financials(
         else:
             shares_out = latest_ann.get("shares_diluted")
 
-    # Correct 1,000x XBRL unit scale errors in TTM period-end shares against latest annual shares
+    # Correct 1,000x / 1,000,000x XBRL unit scale errors in TTM period-end shares against latest annual shares
     ann_ref_sh = latest_ann.get("shares_outstanding") or latest_ann.get("shares_diluted")
-    if shares_out is not None and shares_out > 0 and ann_ref_sh is not None and ann_ref_sh > 0:
-        ratio_ttm_sh = ann_ref_sh / shares_out
-        if 500.0 <= ratio_ttm_sh <= 2000.0:
-            shares_out *= 1000.0
-        elif 0.0005 <= ratio_ttm_sh <= 0.002:
-            shares_out /= 1000.0
+    shares_out = _fix_share_scale(shares_out, ann_ref_sh)
 
     return {
         "period_end": period_end,
@@ -1290,7 +1433,7 @@ def extract_quarterly_financials(
     q_rev = _select_best_single_quarter(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), all_forms)
     )
-    # Bank revenue fallback (standalone quarters)
+    # Bank revenue synthesis (standalone quarters): also override ASC 606 fee-only revenue
     q_nii = _select_best_single_quarter(
         _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), all_forms)
     )
@@ -1298,10 +1441,17 @@ def extract_quarterly_financials(
         _iter_tag_records(company_facts, BANK_NONINT_TAGS, ("USD",), all_forms)
     )
     for end in set(q_nii) & set(q_nonint):
-        if end not in q_rev:
-            r1, r2 = q_nii[end], q_nonint[end]
+        r1, r2 = q_nii[end], q_nonint[end]
+        bank_tot = r1.val + r2.val
+        cur_q = q_rev.get(end)
+        use_bank = cur_q is None or (
+            "RevenueFromContractWithCustomer" in cur_q.tag
+            and r1.val > 0
+            and bank_tot > max(0.0, cur_q.val) * 1.5
+        )
+        if use_bank:
             q_rev[end] = FactRecord(
-                val=r1.val + r2.val,
+                val=bank_tot,
                 end=end,
                 start=r1.start or r2.start,
                 filed=max(r1.filed, r2.filed),
@@ -1309,6 +1459,28 @@ def extract_quarterly_financials(
                 accn=r1.accn,
                 tag="synthetic:BankQ",
                 priority=99,
+            )
+
+    # REIT lease revenue fallback (standalone quarters)
+    q_lease = _select_best_single_quarter(
+        _iter_tag_records(company_facts, REIT_LEASE_TAGS, ("USD",), all_forms)
+    )
+    for end, lr in q_lease.items():
+        if lr.val <= 0:
+            continue
+        cur_q = q_rev.get(end)
+        if cur_q is None:
+            q_rev[end] = lr
+        elif "RevenueFromContractWithCustomer" in cur_q.tag and lr.val > max(0.0, cur_q.val) * 2.0:
+            q_rev[end] = FactRecord(
+                val=lr.val + max(0.0, cur_q.val),
+                end=end,
+                start=lr.start,
+                filed=max(lr.filed, cur_q.filed),
+                form=lr.form,
+                accn=lr.accn,
+                tag="synthetic:LeaseQ",
+                priority=98,
             )
 
     q_op = _select_best_single_quarter(
@@ -1328,6 +1500,70 @@ def extract_quarterly_financials(
     ytd_rev = _select_best_ytd_by_end(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), QUARTERLY_FORMS)
     )
+    ytd_nii = _select_best_ytd_by_end(
+        _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), QUARTERLY_FORMS)
+    )
+    ytd_nonint = _select_best_ytd_by_end(
+        _iter_tag_records(company_facts, BANK_NONINT_TAGS, ("USD",), QUARTERLY_FORMS)
+    )
+    for end in set(ytd_nii) & set(ytd_nonint):
+        r1, r2 = ytd_nii[end], ytd_nonint[end]
+        if r1.start != r2.start:
+            continue
+        bank_tot = r1.val + r2.val
+        cur_y = ytd_rev.get(end)
+        use_bank = cur_y is None or (
+            "RevenueFromContractWithCustomer" in cur_y.tag
+            and r1.val > 0
+            and bank_tot > max(0.0, cur_y.val) * 1.5
+        )
+        if use_bank:
+            ytd_rev[end] = FactRecord(
+                val=bank_tot,
+                end=end,
+                start=r1.start,
+                filed=max(r1.filed, r2.filed),
+                form=r1.form,
+                accn=r1.accn,
+                tag="synthetic:BankYTD",
+                priority=99,
+            )
+    ytd_lease = _select_best_ytd_by_end(
+        _iter_tag_records(company_facts, REIT_LEASE_TAGS, ("USD",), QUARTERLY_FORMS)
+    )
+    for end, lr in ytd_lease.items():
+        if lr.val <= 0:
+            continue
+        cur_y = ytd_rev.get(end)
+        if cur_y is None:
+            ytd_rev[end] = lr
+        elif "RevenueFromContractWithCustomer" in cur_y.tag and lr.val > max(0.0, cur_y.val) * 2.0:
+            ytd_rev[end] = FactRecord(
+                val=lr.val + max(0.0, cur_y.val),
+                end=end,
+                start=lr.start,
+                filed=max(lr.filed, cur_y.filed),
+                form=lr.form,
+                accn=lr.accn,
+                tag="synthetic:LeaseYTD",
+                priority=98,
+            )
+
+    # Earliest (contemporaneous, pre-restatement) 10-K annual revenue per (fy_end, tag)
+    # Used when a later 10-K restated continuing ops downward after a spin-off/divestiture
+    # while the historical Q3 10-Q YTD was never restated (e.g. WDC, APP, AIG, MMM)
+    orig_ann_rev_by_end_tag: dict[tuple[str, str], FactRecord] = {}
+    orig_ann_rev_by_end: dict[str, FactRecord] = {}
+    for rec in _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), ANNUAL_FORMS):
+        if not _is_annual_flow(rec):
+            continue
+        kt = (rec.end, rec.tag)
+        prev_t = orig_ann_rev_by_end_tag.get(kt)
+        if prev_t is None or _rec_recency_key(rec) < _rec_recency_key(prev_t):
+            orig_ann_rev_by_end_tag[kt] = rec
+        prev_e = orig_ann_rev_by_end.get(rec.end)
+        if prev_e is None or (rec.priority, _rec_recency_key(rec)) < (prev_e.priority, _rec_recency_key(prev_e)):
+            orig_ann_rev_by_end[rec.end] = rec
     ytd_op = _select_best_ytd_by_end(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["operating_income"], ("USD",), QUARTERLY_FORMS)
     )
@@ -1394,6 +1630,22 @@ def extract_quarterly_financials(
 
         q3_rev = find_q3_ytd(ytd_rev)
         q3_ni = find_q3_ytd(ytd_ni)
+
+        def _derive_q4_rev(ann_val: float | None, q3_rec: FactRecord | None) -> float | None:
+            if ann_val is None or q3_rec is None:
+                return None
+            q4_val = ann_val - q3_rec.val
+            if q3_rec.val > 0 and (q4_val <= 0 or q4_val < 0.15 * (q3_rec.val / 3.0)):
+                # Discontinued-ops restatement mismatch: compare against contemporaneous 10-K on Q3's basis
+                orig_r = orig_ann_rev_by_end_tag.get((fy_end, q3_rec.tag)) or orig_ann_rev_by_end.get(fy_end)
+                if orig_r is not None and abs(orig_r.val - ann_val) > abs(ann_val) * 0.05:
+                    alt_q4 = orig_r.val - q3_rec.val
+                    if alt_q4 > 0.25 * (q3_rec.val / 3.0):
+                        return alt_q4
+                if q4_val <= 0:
+                    return None
+            return q4_val
+
         if fy_end not in quarters and (q3_rev is not None or q3_ni is not None):
             q3_op = find_q3_ytd(ytd_op)
             q3_pt = find_q3_ytd(ytd_pretax)
@@ -1407,7 +1659,7 @@ def extract_quarterly_financials(
                 "period_end": fy_end,
                 "period_start": q3_rev.end if q3_rev else (q3_ni.end if q3_ni else None),
                 "fp": "Q4",
-                "revenue": (ann["revenue"] - q3_rev.val) if (ann.get("revenue") is not None and q3_rev is not None) else None,
+                "revenue": _derive_q4_rev(ann.get("revenue"), q3_rev),
                 "operating_income": (ann["operating_income"] - q3_op.val) if (ann.get("operating_income") is not None and q3_op is not None) else None,
                 "pretax_income": (ann["pretax_income"] - q3_pt.val) if (ann.get("pretax_income") is not None and q3_pt is not None) else None,
                 "net_income": (ann["net_income"] - q3_ni.val) if (ann.get("net_income") is not None and q3_ni is not None) else None,
@@ -1417,6 +1669,30 @@ def extract_quarterly_financials(
             }
         elif fy_end in quarters:
             quarters[fy_end]["fp"] = "Q4"
+            # Guard against mis-tagged 10-K full-year revenue given a 90-day Q4 duration (e.g. DINO, NI, LHX)
+            q4_rec = q_rev.get(fy_end)
+            if (
+                q4_rec is not None
+                and q4_rec.form in ANNUAL_FORMS
+                and q3_rev is not None
+                and q3_rev.val > 0
+            ):
+                cur_q4_rev = quarters[fy_end].get("revenue")
+                ann_rev = ann.get("revenue")
+                if (
+                    cur_q4_rev is not None
+                    and ann_rev is not None
+                    and ann_rev > 0
+                    and abs(cur_q4_rev - ann_rev) / ann_rev < 0.05
+                ):
+                    quarters[fy_end]["revenue"] = _derive_q4_rev(ann_rev, q3_rev)
+                elif (
+                    cur_q4_rev is not None
+                    and ann_rev is None
+                    and cur_q4_rev > q3_rev.val * 1.1
+                ):
+                    # 10-K tagged full-year revenue with 90-day Q4 dates (e.g. LHX FY2025): derive Q4 from it
+                    quarters[fy_end]["revenue"] = _derive_q4_rev(cur_q4_rev, q3_rev)
 
     # Compute standalone quarterly OCF/FCF by differencing ascending YTD entries sharing the same start date
     def assign_quarterly_cf(ytd_map: dict[str, FactRecord], ann_field: str, abs_outflow: bool = False) -> dict[str, float]:

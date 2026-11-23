@@ -26,6 +26,10 @@ _NUM_RE = re.compile(r"^\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)$")
 _MERGED_ROW_RE = re.compile(
     r"^(.+?)\s+([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)$"
 )
+# Merged cell with no space between company suffix and comma-formatted shares (e.g. "Stanley Black & Decker Inc.1,567,864 115,975")
+_MERGED_NO_SPACE_RE = re.compile(
+    r"^(.+?[A-Za-z\.])([0-9]{1,3}(?:,[0-9]{3})+)\s+\$?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)$"
+)
 # Leading footnote-marker cell (e.g. *, ^, 1, 2, *,^, §,*, 1,2)
 _LEAD_MARKER_RE = re.compile(r"^[\*\^†‡§•·,0-9\s]+$")
 # Leading symbol markers attached to company name (preserve digits for 3M Co. / 1st Source Corp.)
@@ -300,7 +304,7 @@ def parse_vanguard_legacy_html(
         # Recover rows where PDF-to-HTML conversion merged Name+Shares or Shares+Value into one cell
         if line_name is None and len(data_cells) >= 2 and not _SECTOR_HEADER_RE.search(row_text):
             joined = " ".join(data_cells)
-            m_merged = _MERGED_ROW_RE.match(joined)
+            m_merged = _MERGED_ROW_RE.match(joined) or _MERGED_NO_SPACE_RE.match(joined)
             if m_merged:
                 cand_name = m_merged.group(1).strip()
                 c_sh = _parse_number(m_merged.group(2))
@@ -356,6 +360,7 @@ def parse_vanguard_legacy_html(
                 "market",
                 "value",
                 "shares",
+                "shares market",
                 "($000)",
                 "shares ($000)",
                 "market value",

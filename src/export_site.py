@@ -72,6 +72,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
         meta_etfs: list[dict[str, Any]] = []
         etf_membership: dict[str, set[str]] = {}
         holdings_file_count = 0
+        splits_cache: dict[tuple[str, ...], list[tuple[str, float]]] = {}
 
         # ------------------------------------------------------------
         # 1. Per-ETF summary.json and holdings/<AS_OF>.json
@@ -213,7 +214,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                 holdings_file_count += 1
 
             # Compute estimated annual dividends and portfolio yield per reporting date
-            div_history = compute_etf_dividend_history(conn, etf_id)
+            div_history = compute_etf_dividend_history(conn, etf_id, splits_cache=splits_cache)
 
             # Build summary.json
             summary_dates = [
