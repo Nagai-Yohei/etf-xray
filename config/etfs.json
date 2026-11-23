@@ -24,7 +24,12 @@
     ],
     "structure": "open_end",
     "fiscal_year_end_month": 4,
-    "legacy_adapter": null,
+    "legacy_adapter": "ishares_legacy",
+    "legacy_name_patterns": [
+      "iShares Core High Dividend ETF",
+      "iShares High Dividend ETF",
+      "iShares High Dividend Equity Fund"
+    ],
     "active": true
   },
   {

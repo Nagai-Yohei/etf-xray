@@ -9,7 +9,7 @@ Live site: https://etf-xray.pages.dev
 - VYM — Vanguard High Dividend Yield ETF (2011-01 – present)
 - VOO — Vanguard S&P 500 ETF (2011-03 – present)
 - SCHD — Schwab U.S. Dividend Equity ETF (2011-11 – present)
-- HDV — iShares Core High Dividend ETF (2019-10 – present)
+- HDV — iShares Core High Dividend ETF (2011-04 – present)
 
 ## Quick Start
 

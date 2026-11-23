@@ -96,8 +96,9 @@ def normalize_company_name(
 ) -> str:
     """Build a normalized company-name key (retains share-class suffixes by default)."""
     s = name.strip()
-    # Strip trailing "/The" or leading "The "
+    # Strip trailing "/The", trailing "(The)", or leading "The "
     s = re.sub(r"/\s*The$", "", s, flags=re.IGNORECASE).strip()
+    s = re.sub(r"\(\s*The\s*\)$", "", s, flags=re.IGNORECASE).strip()
     s = re.sub(r"^The\s+", "", s, flags=re.IGNORECASE).strip()
     # Strip SEC trailing state/qualifier suffixes (e.g. /DE/, /NEW/)
     s = _SEC_SLASH_SUFFIX_RE.sub("", s).strip()
