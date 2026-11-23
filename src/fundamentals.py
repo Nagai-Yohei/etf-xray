@@ -180,6 +180,7 @@ TAG_MAP_FLOW_USD: dict[str, list[tuple[str, str]]] = {
         ("us-gaap", "CostOfGoodsAndServicesSold"),
         ("us-gaap", "CostOfRevenue"),
         ("us-gaap", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"),
+        ("us-gaap", "CostOfPurchasedOilAndGas"),
         ("ifrs-full", "CostOfSales"),
     ],
     "cost_of_goods": [

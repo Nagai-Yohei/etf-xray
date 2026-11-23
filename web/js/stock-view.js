@@ -1278,6 +1278,25 @@ export async function renderStockView(
           data: { labels: fyLabels, datasets: divDs },
           options: baseChartOptions(fmtAxisUsd, hasRight ? fmtAxisPct : null),
         });
+
+        const hasPayoutGap = annual.some((r) => {
+          const d = effectiveDps(r);
+          const epsGap =
+            d != null && (r.eps_diluted == null || r.eps_diluted <= 0 || (d / r.eps_diluted) * 100 > 250);
+          const fcfGap =
+            r.dividends_paid != null &&
+            r.dividends_paid > 0 &&
+            (r.fcf == null || r.fcf <= 0 || (r.dividends_paid / r.fcf) * 100 > 250);
+          return epsGap || fcfGap;
+        });
+        if (hasPayoutGap) {
+          body.appendChild(
+            el("p", {
+              className: "section-note",
+              text: "Payout lines omit years with negative EPS/FCF or payout ratios above 250% (see table below for exact figures).",
+            })
+          );
+        }
       }
 
       if (showTables) {
