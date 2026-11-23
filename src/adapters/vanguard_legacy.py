@@ -10,7 +10,9 @@ Key behaviors and validation rules:
 
 from __future__ import annotations
 
+import html as html_lib
 import re
+import statistics
 from typing import Any
 
 from lxml import html as lhtml
@@ -89,6 +91,7 @@ def _html_to_plain(raw: str) -> str:
     """Strip inline kerning tags (span/font) without adding spaces; normalize block boundaries to spaces."""
     s = _BLOCK_TAG_RE.sub(" ", raw)
     s = _ANY_TAG_RE.sub("", s)
+    s = html_lib.unescape(s)
     return _clean_text(s)
 
 
@@ -205,9 +208,13 @@ def parse_vanguard_legacy_html(
     start_pos, end_pos = _find_section_bounds(html_text, fund_title)
     chunk = html_text[start_pos:end_pos]
 
-    # Auto-detect thousands ($000) scaling
-    header_plain = _html_to_plain(chunk[:12000]).lower()
-    value_multiplier = 1000.0 if ("$000" in header_plain or "($000" in header_plain or "in thousands" in header_plain) else 1.0
+    # Auto-detect thousands ($000) scaling (scan wide header window after HTML entity unescaping)
+    header_plain = _html_to_plain(chunk[:45000]).lower()
+    value_multiplier = (
+        1000.0
+        if ("$000" in header_plain or "($000" in header_plain or "in thousands" in header_plain)
+        else 1.0
+    )
 
     doc = lhtml.fromstring(chunk)
 
@@ -390,6 +397,14 @@ def parse_vanguard_legacy_html(
     holdings = sorted(merged.values(), key=lambda h: h.value_usd, reverse=True)
     if not holdings:
         raise ValueError(f"No holdings parsed from {etf_id} {form} {accession} ({as_of})")
+
+    # Sanity-check against missed $000 scaling (median share price < $1 implies thousands unit)
+    sample_prices = [h.value_usd / h.shares for h in holdings if h.shares > 0]
+    if value_multiplier == 1.0 and sample_prices and statistics.median(sample_prices) < 1.0:
+        raise ValueError(
+            f"Suspected missed $000 scaling for {etf_id} {as_of} ({accession}): "
+            f"median implied price=${statistics.median(sample_prices):.4f}"
+        )
 
     reported_total_usd = reported_total_raw * value_multiplier
     calc_total_usd = sum(h.value_usd for h in holdings)

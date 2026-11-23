@@ -29,9 +29,16 @@ def _effective_dps(row: sqlite3.Row | dict[str, Any]) -> tuple[float | None, boo
     if row["dps_paid"] is not None:
         return float(row["dps_paid"]), False
     div_paid = row["dividends_paid"]
-    sh = row["shares_diluted"] or row["shares_outstanding"]
-    if div_paid is not None and sh is not None and sh > 0:
-        return round(float(div_paid) / float(sh), 4), True
+    sh_dil = row["shares_diluted"]
+    sh_out = row["shares_outstanding"]
+    # For multi-class issuers (e.g. CWEN) where dividends_paid spans all classes while shares_diluted
+    # covers one class, use total shares_outstanding when it substantially exceeds shares_diluted.
+    if sh_dil and sh_out and float(sh_out) > float(sh_dil) * 1.3 and float(sh_out) < float(sh_dil) * 20.0:
+        sh = float(sh_out)
+    else:
+        sh = float(sh_dil or sh_out or 0.0)
+    if div_paid is not None and sh > 0:
+        return round(float(div_paid) / sh, 4), True
     return None, False
 
 

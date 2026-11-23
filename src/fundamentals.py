@@ -888,6 +888,29 @@ def extract_annual_financials(
         sh_dil_adj = (sh_dil_rec.val * sh_dil_factor) if sh_dil_rec is not None else None
         sh_out_adj = (sh_out_rec.val * sh_out_factor) if sh_out_rec is not None else None
 
+        # Correct 1,000x XBRL share-count unit scale errors (e.g. shares filed in thousands)
+        implied_sh: float | None = None
+        if (
+            ni_rec is not None
+            and eps_adj is not None
+            and abs(eps_adj) >= 0.05
+            and abs(ni_rec.val) >= 1_000_000.0
+        ):
+            implied_sh = abs(ni_rec.val / eps_adj)
+        if sh_dil_adj is not None and sh_dil_adj > 0 and implied_sh is not None:
+            ratio_dil = implied_sh / sh_dil_adj
+            if 500.0 <= ratio_dil <= 2000.0:
+                sh_dil_adj *= 1000.0
+            elif 0.0005 <= ratio_dil <= 0.002:
+                sh_dil_adj /= 1000.0
+        ref_sh_for_out = sh_dil_adj or implied_sh
+        if sh_out_adj is not None and sh_out_adj > 0 and ref_sh_for_out is not None and ref_sh_for_out > 0:
+            ratio_out = ref_sh_for_out / sh_out_adj
+            if 500.0 <= ratio_out <= 2000.0:
+                sh_out_adj *= 1000.0
+            elif 0.0005 <= ratio_out <= 0.002:
+                sh_out_adj /= 1000.0
+
         # Normalize CapEx, dividends paid, buybacks, and expense line items to positive magnitudes
         rev_val = rev_rec.val if rev_rec is not None else None
         if gp_rec is not None:
@@ -911,6 +934,25 @@ def extract_annual_financials(
 
         # Representative split factor (based on PL filing date)
         rep_split_factor = _cumulative_split_factor(filed, split_events)
+
+        # Reject corrupted XBRL per-share DPS facts (e.g. 1,000x/1,000,000x unit scaling errors)
+        # so downstream metrics fall back cleanly to dividends_paid / shares
+        denom_sh = max(sh_dil_adj or 0.0, sh_out_adj or 0.0)
+        est_dps = (div_paid_val / denom_sh) if (div_paid_val is not None and denom_sh > 0) else None
+
+        def _clean_per_share_dps(val: float | None, sf: float) -> float | None:
+            if val is None:
+                return None
+            if val < 0:
+                return None
+            if sf >= 0.05 and val > 150.0:
+                return None
+            if est_dps is not None and est_dps > 0 and val > 25.0 and (val / est_dps) > 20.0:
+                return None
+            return val
+
+        dps_d_adj = _clean_per_share_dps(dps_d_adj, dps_d_factor)
+        dps_p_adj = _clean_per_share_dps(dps_p_adj, dps_p_factor)
 
         rows.append(
             {
@@ -1121,10 +1163,16 @@ def extract_ttm_financials(
     fcf_ttm = (ocf_ttm - capex_ttm) if (ocf_ttm is not None and capex_ttm is not None) else latest_ann.get("fcf")
     eps_ttm = calc_ttm_ps("eps_diluted")
 
-    # TTM DPS: prefer declared basis; fall back to paid basis
+    # TTM DPS: prefer declared basis; fall back to paid basis, rejecting 1,000x+ unit errors
     dps_ttm = calc_ttm_ps("dps_declared")
     if dps_ttm is None:
         dps_ttm = calc_ttm_ps("dps_paid")
+    if dps_ttm is not None:
+        ann_ref_dps = latest_ann.get("dps_declared") or latest_ann.get("dps_paid")
+        if dps_ttm < 0 or dps_ttm > 150.0:
+            dps_ttm = None
+        elif ann_ref_dps is not None and ann_ref_dps > 0 and dps_ttm > 25.0 and (dps_ttm / ann_ref_dps) > 20.0:
+            dps_ttm = None
 
     # Balance sheet (equity and period-end shares): fetch latest instant at period_end
     all_forms = ANNUAL_FORMS | QUARTERLY_FORMS
@@ -1166,6 +1214,15 @@ def extract_ttm_financials(
             ).val
         else:
             shares_out = latest_ann.get("shares_diluted")
+
+    # Correct 1,000x XBRL unit scale errors in TTM period-end shares against latest annual shares
+    ann_ref_sh = latest_ann.get("shares_outstanding") or latest_ann.get("shares_diluted")
+    if shares_out is not None and shares_out > 0 and ann_ref_sh is not None and ann_ref_sh > 0:
+        ratio_ttm_sh = ann_ref_sh / shares_out
+        if 500.0 <= ratio_ttm_sh <= 2000.0:
+            shares_out *= 1000.0
+        elif 0.0005 <= ratio_ttm_sh <= 0.002:
+            shares_out /= 1000.0
 
     return {
         "period_end": period_end,

@@ -32,7 +32,12 @@ import {
 function effectiveDps(row) {
   if (row.dps_declared !== null && row.dps_declared !== undefined) return row.dps_declared;
   if (row.dps_paid !== null && row.dps_paid !== undefined) return row.dps_paid;
-  const sh = row.shares_diluted || row.shares_outstanding;
+  const shDil = row.shares_diluted;
+  const shOut = row.shares_outstanding;
+  const sh =
+    shDil && shOut && shOut > shDil * 1.3 && shOut < shDil * 20
+      ? shOut
+      : shDil || shOut;
   if (row.dividends_paid !== null && row.dividends_paid !== undefined && sh > 0) {
     return row.dividends_paid / sh;
   }
