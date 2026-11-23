@@ -58,6 +58,22 @@ _CLASS_SUFFIX_RE = re.compile(
     r"(?:,?\s+(?:(?:class|cl\.?)\s+([a-z])(?:\s+shares?)?|non[\s-]?voting(?:\s+shares?)?))$",
     re.IGNORECASE,
 )
+# Non-common-stock ticker suffixes (preferred series, warrants, units, rights)
+_NON_COMMON_TICKER_RE = re.compile(
+    r"(?:\.(?:P[A-Z]|PR[A-Z]?|WS|WT|W|U|R)|R)$"
+)
+
+
+def is_non_common_ticker(ticker: str | None) -> bool:
+    """Return True for preferred shares, warrants, units, or rights tickers (e.g. OXY.WS, AHL.PD)."""
+    if not ticker:
+        return False
+    t = ticker.upper()
+    if t.endswith((".WS", ".WT", ".PR")) or re.search(r"\.(?:P[A-Z]|PR[A-Z])$", t):
+        return True
+    if t in {"TMUSR"}:
+        return True
+    return False
 
 
 @dataclass
@@ -326,6 +342,10 @@ def _build_sec_maps(
             ticker_to_cik.setdefault(ticker.replace(".", "-"), cik10)
 
         if title:
+            # Skip preferred/warrant/unit/right tickers when building name->ticker lookup so acquired
+            # common stocks (e.g. TRTN, AHL, ANAT) are never mapped to surviving preferred tickers
+            if is_non_common_ticker(ticker) or ticker.endswith((".W", ".U", ".R")):
+                continue
             for strip_corp in (False, True):
                 nk = normalize_company_name(title, strip_corp=strip_corp)
                 if nk and nk not in name_to_sec:
@@ -368,6 +388,8 @@ def resolve_all_filings(
             ticker: str | None = None
             if h.cusip and h.cusip in manual_cusip:
                 ticker = manual_cusip[h.cusip]
+            elif h.isin and h.isin in manual_cusip:
+                ticker = manual_cusip[h.isin]
             else:
                 ticker = figi.lookup(h.cusip, h.isin)
             if not ticker:
@@ -432,9 +454,12 @@ def resolve_all_filings(
             isin = h.isin
             cik: str | None = None
 
-            # Priority 1: manual_tickers.csv (CUSIP override)
+            # Priority 1: manual_tickers.csv (CUSIP or ISIN override)
             if cusip and cusip in manual_cusip:
                 ticker = manual_cusip[cusip]
+                source = "manual_cusip"
+            elif isin and isin in manual_cusip:
+                ticker = manual_cusip[isin]
                 source = "manual_cusip"
 
             # Priority 2: OpenFIGI (CUSIP / ISIN)
@@ -538,13 +563,20 @@ def resolve_all_filings(
                     if ticker is not None:
                         break
 
-            # Resolve CIK (fall back to parent ticker for dotted share classes, then cik_overrides.json)
-            if cik is None and ticker:
+            # Resolve CIK:
+            # 1) Never attach common-stock CIK to warrants/preferreds/rights or .OLD legacy entities
+            # 2) Respect explicit cik_overrides.json (including explicit null to block reused tickers)
+            # 3) Only strip single-letter share-class suffixes (.A/.B/.C) when falling back to parent CIK
+            if ticker and (is_non_common_ticker(ticker) or ticker.endswith(".OLD")):
+                cik = None
+            elif ticker and ticker in cik_overrides:
+                cik = cik_overrides[ticker].get("cik")
+            elif cik is None and ticker:
                 cik = ticker_to_cik.get(ticker) or ticker_to_cik.get(ticker.replace(".", "-"))
                 if cik is None and "." in ticker:
-                    cik = ticker_to_cik.get(ticker.split(".", 1)[0])
-                if cik is None and ticker in cik_overrides:
-                    cik = cik_overrides[ticker].get("cik")
+                    base, suffix = ticker.split(".", 1)
+                    if suffix in {"A", "B", "C"}:
+                        cik = ticker_to_cik.get(base)
 
             # Assign canonical security_id
             if ticker:

@@ -31,7 +31,7 @@ from src.fundamentals import (
     load_cik_overrides,
     merge_company_facts,
 )
-from src.identify import ResolvedHolding, resolve_all_filings
+from src.identify import ResolvedHolding, is_non_common_ticker, resolve_all_filings
 from src.metrics import rebuild_quarter_prices, rebuild_stock_metrics
 
 ETFS_CONFIG_PATH = CONFIG_DIR / "etfs.json"
@@ -219,18 +219,40 @@ def update_fundamentals(
     """Fetch SEC XBRL annual, quarterly, and TTM fundamentals for all securities with a CIK."""
     cik_overrides = load_cik_overrides()
 
-    # Backfill missing primary CIKs on existing securities from config/cik_overrides.json
+    # Apply config/cik_overrides.json (both positive overrides and explicit null blocks for reused tickers)
     for sec_id, entry in cik_overrides.items():
         override_cik = entry.get("cik")
         if override_cik:
             conn.execute(
-                """
-                UPDATE securities
-                SET cik = ?
-                WHERE security_id = ? AND (cik IS NULL OR cik = '')
-                """,
+                "UPDATE securities SET cik = ? WHERE security_id = ?",
                 (override_cik, sec_id),
             )
+        else:
+            conn.execute(
+                "UPDATE securities SET cik = NULL WHERE security_id = ?",
+                (sec_id,),
+            )
+
+    # Clear CIKs on warrants/preferreds/rights and .OLD legacy entities so they never inherit
+    # another entity's common-stock XBRL financials
+    all_sec_ids = [
+        r["security_id"]
+        for r in conn.execute("SELECT security_id FROM securities WHERE cik IS NOT NULL AND cik != ''").fetchall()
+    ]
+    for sec_id in all_sec_ids:
+        if is_non_common_ticker(sec_id) or sec_id.endswith(".OLD"):
+            conn.execute("UPDATE securities SET cik = NULL WHERE security_id = ?", (sec_id,))
+
+    # Purge stale XBRL rows for any security whose CIK was cleared
+    for tbl in ("financials_annual", "financials_quarterly", "financials_ttm"):
+        conn.execute(
+            f"""
+            DELETE FROM {tbl}
+            WHERE security_id IN (
+                SELECT security_id FROM securities WHERE cik IS NULL OR cik = ''
+            )
+            """
+        )
     conn.commit()
 
     targets = conn.execute(

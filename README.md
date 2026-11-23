@@ -37,8 +37,8 @@ Set `SEC_USER_AGENT` in `.env` to your app/name and contact email per SEC EDGAR 
 
 ## Overview
 
-- `config/` — Target ETF definitions (`etfs.json`) and curated ticker overrides (`manual_tickers.csv`)
-- `src/` — EDGAR client, filing adapters (`N-PORT-P`, Schwab/Vanguard legacy), entity resolution, XBRL extractor, metrics, static JSON exporter, integrity checker, local server, and Cloudflare deployer
+- `config/` — Target ETF definitions (`etfs.json`), curated ticker overrides (`manual_tickers.csv`), and CIK chains (`cik_overrides.json`)
+- `src/` — EDGAR client, filing adapters (`N-PORT-P`, Schwab/Vanguard/iShares legacy), entity resolution, XBRL extractor, metrics, static JSON exporter, integrity checker, local server, and Cloudflare deployer
 - `web/` — Vanilla HTML/CSS/ES Modules frontend with locally bundled Chart.js and strict CSP (`_headers`)
 
 ## Deployment
@@ -47,6 +47,6 @@ Set `CLOUDFLARE_API_TOKEN` (scoped to Cloudflare Pages: Edit), `CLOUDFLARE_ACCOU
 
 ## Notes & License
 
-Data is compiled from SEC EDGAR (`N-PORT-P`, `N-CSR`, `N-CSRS`, `N-Q`, `10-K`/`10-Q` XBRL CompanyFacts) and OpenFIGI. Quarter-end share prices are implied from reported ETF holdings (`value_usd / shares`). For informational purposes only; not investment advice.
+Data is compiled from SEC EDGAR (`N-PORT-P`, `N-CSR`, `N-CSRS`, `N-Q`, `10-K`/`10-Q` XBRL CompanyFacts) and OpenFIGI. Quarter-end share prices are implied from reported ETF holdings (`value_usd / shares`). Known SEC N-Q to N-PORT transition filing gaps (no public filing exists for those period ends): `SCHD 2019-05-31`, `VOO 2019-03-31`, `VYM 2019-07-31`, and `HDV 2019-07-31`. For informational purposes only; not investment advice.
 
 Licensed under the [MIT License](LICENSE).

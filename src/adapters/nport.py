@@ -9,11 +9,18 @@ AGENTS.md rules:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from lxml import etree
 
 from src.edgar import EdgarClient, normalize_cik
+
+# Non-common-equity instrument markers in N-PORT <title> (CVRs, rights, escrow receipts, warrants)
+_NON_COMMON_TITLE_RE = re.compile(
+    r"\b(?:CVR|CONTINGENT\s+VALUE|ESCROW|WARRANTS?|RIGHTS?)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -108,8 +115,15 @@ def parse_nport_xml(
             continue
 
         name = _find_child_text(item, "name")
+        title = _find_child_text(item, "title")
         if not name:
-            name = _find_child_text(item, "title")
+            name = title
+
+        # Exclude CVRs, contingent value rights, escrow receipts, rights, and warrants
+        # even if N-PORT categorizes them as assetCat="EC" (preserve issuers like "CVR Energy Inc")
+        if title and _NON_COMMON_TITLE_RE.search(title):
+            if "CVR ENERGY" not in name.upper():
+                continue
 
         cusip_raw = _find_child_text(item, "cusip").strip().upper()
         cusip = (

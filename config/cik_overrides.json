@@ -54,5 +54,9 @@
   "FDP": {
     "cik": "0001047340",
     "note": "Fresh Del Monte Produce Inc. (not present in current live SEC company_tickers.json)"
+  },
+  "AVX": {
+    "cik": null,
+    "note": "Legacy AVX Corp. acquired by Kyocera in 2020; block reused microcap ticker CIK 0001826397"
   }
 }
