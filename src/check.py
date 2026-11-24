@@ -414,6 +414,35 @@ def check_database(errors: list[str]) -> str:
                 f"[DB] Financial ({grp}) {sec_id} should omit ROIC/NetDebt-to-FCF (roic={rv}, ndf={ndf})"
             )
 
+        # Verify no negative cash or total_debt in financials_annual
+        bad_neg_bs = conn.execute(
+            """
+            SELECT security_id, fy_end, cash, total_debt
+            FROM financials_annual
+            WHERE (cash IS NOT NULL AND cash < 0)
+               OR (total_debt IS NOT NULL AND total_debt < 0)
+            """
+        ).fetchall()
+        if bad_neg_bs:
+            errors.append(
+                f"[DB] Negative cash or total_debt in financials_annual: {len(bad_neg_bs)} row(s)"
+            )
+
+        # Verify no recent fiscal year has gross_profit > revenue * 1.05 (partial-revenue tag leak)
+        bad_gp_gt_rev = conn.execute(
+            """
+            SELECT security_id, fy_end, revenue, gross_profit
+            FROM financials_annual
+            WHERE fy_end >= '2018-01-01'
+              AND revenue IS NOT NULL AND revenue > 0
+              AND gross_profit IS NOT NULL AND gross_profit > revenue * 1.05
+            """
+        ).fetchall()
+        for sec_id, fy_end, rev_v, gp_v in bad_gp_gt_rev:
+            errors.append(
+                f"[DB] gross_profit ({gp_v}) > revenue ({rev_v}) for {sec_id} {fy_end}"
+            )
+
         sec_count = conn.execute("SELECT COUNT(*) FROM securities").fetchone()[0]
         ann_count = conn.execute("SELECT COUNT(*) FROM financials_annual").fetchone()[0]
         hold_count = conn.execute("SELECT COUNT(*) FROM etf_holdings").fetchone()[0]

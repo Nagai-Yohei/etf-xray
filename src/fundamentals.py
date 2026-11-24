@@ -163,9 +163,9 @@ KNOWN_SPLIT_RATIOS = (
 TAG_MAP_FLOW_USD: dict[str, list[tuple[str, str]]] = {
     "revenue": [
         ("us-gaap", "Revenues"),
+        ("us-gaap", "RevenuesNetOfInterestExpense"),
         ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax"),
         ("us-gaap", "SalesRevenueNet"),
-        ("us-gaap", "RevenuesNetOfInterestExpense"),
         ("us-gaap", "RevenueFromContractWithCustomerIncludingAssessedTax"),
         ("us-gaap", "SalesRevenueGoodsNet"),
         ("us-gaap", "SalesRevenueServicesNet"),
@@ -944,9 +944,21 @@ def extract_annual_financials(
         ):
             flow_usd["revenue"][fe] = asc_r
 
+    # Guard against partial/segment revenue leaks where GrossProfit exceeds the chosen revenue tag
+    # (e.g. AIT 2011-2016 Revenues=$24M vs SalesRevenueNet=$2.75B & GrossProfit=$770M)
+    for fe, gp_r in flow_usd["gross_profit"].items():
+        cur_r = flow_usd["revenue"].get(fe)
+        if cur_r is not None and gp_r.val > 0 and cur_r.val > 0 and gp_r.val > cur_r.val * 1.02:
+            better = [
+                rec
+                for (r_fe, _r_tag), rec in rev_by_end_tag.items()
+                if r_fe == fe and rec.val >= gp_r.val
+            ]
+            if better:
+                flow_usd["revenue"][fe] = min(better, key=lambda r: r.priority)
+
     # Bank revenue synthesis (net interest income + noninterest income):
-    # apply both when revenue tags are absent AND when ASC 606 RevenueFromContractWithCustomer*
-    # captures only non-interest fee income (banks exclude interest income from ASC 606).
+    # apply when revenue tags are absent OR capture only non-interest fee income (e.g. FITB, RF, CPF, NBHC, ZION).
     bank_nii = _select_best_annual_flow(
         _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), ANNUAL_FORMS)
     )
@@ -959,8 +971,7 @@ def extract_annual_financials(
         bank_tot = r1.val + r2.val
         cur_rev = flow_usd["revenue"].get(fy_end)
         use_bank = cur_rev is None or (
-            "RevenueFromContractWithCustomer" in cur_rev.tag
-            and r1.val > 0
+            r1.val > 0
             and bank_tot > max(0.0, cur_rev.val) * 1.5
         )
         if use_bank:
@@ -1298,9 +1309,11 @@ def extract_annual_financials(
                 if fy_end in instant_usd["current_liabilities"]
                 else None,
                 "cash": instant_usd["cash"][fy_end].val
-                if fy_end in instant_usd["cash"]
+                if (fy_end in instant_usd["cash"] and instant_usd["cash"][fy_end].val >= 0)
                 else None,
-                "total_debt": total_debt_map.get(fy_end),
+                "total_debt": total_debt_map.get(fy_end)
+                if (total_debt_map.get(fy_end) is not None and total_debt_map[fy_end] >= 0)
+                else None,
                 "goodwill": instant_usd["goodwill"][fy_end].val
                 if fy_end in instant_usd["goodwill"]
                 else None,
@@ -1679,8 +1692,7 @@ def extract_quarterly_financials(
         bank_tot = r1.val + r2.val
         cur_q = q_rev.get(end)
         use_bank = cur_q is None or (
-            "RevenueFromContractWithCustomer" in cur_q.tag
-            and r1.val > 0
+            r1.val > 0
             and bank_tot > max(0.0, cur_q.val) * 1.5
         )
         if use_bank:
@@ -1747,8 +1759,7 @@ def extract_quarterly_financials(
         bank_tot = r1.val + r2.val
         cur_y = ytd_rev.get(end)
         use_bank = cur_y is None or (
-            "RevenueFromContractWithCustomer" in cur_y.tag
-            and r1.val > 0
+            r1.val > 0
             and bank_tot > max(0.0, cur_y.val) * 1.5
         )
         if use_bank:
@@ -1817,6 +1828,51 @@ def extract_quarterly_financials(
         _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["capex"], ("USD",), QUARTERLY_FORMS)
     )
 
+    # Refine split effective dates using 10-Q comparative EPS so 10-Qs filed AFTER a mid-year split
+    # and BEFORE the next 10-K are not double-divided (e.g. CTAS 4:1 split in Sep 2024 before Jul 2025 10-K)
+    q_split_events = list(split_events)
+    if q_split_events:
+        raw_q_eps_all = _iter_tag_records(
+            company_facts, TAG_MAP_FLOW_PER_SHARE["eps_diluted"], ("USD/shares",), QUARTERLY_FORMS
+        )
+        eps_by_period: dict[tuple[str, str], dict[str, FactRecord]] = defaultdict(dict)
+        for rec in raw_q_eps_all:
+            if not rec.start:
+                continue
+            dur = _duration_days(rec.start, rec.end)
+            if dur is None or not (60 <= dur <= 310):
+                continue
+            cur = eps_by_period[(rec.start, rec.end)].get(rec.filed)
+            if cur is None or rec.priority < cur.priority:
+                eps_by_period[(rec.start, rec.end)][rec.filed] = rec
+
+        refined_events: list[tuple[str, float]] = []
+        for eff_filed_10k, factor in q_split_events:
+            earliest_q_post: str | None = None
+            for by_filed in eps_by_period.values():
+                filings_sorted = sorted(by_filed.keys())
+                for i in range(len(filings_sorted)):
+                    f_old = filings_sorted[i]
+                    if f_old >= eff_filed_10k:
+                        break
+                    v_old = by_filed[f_old].val
+                    if abs(v_old) < 0.15:
+                        continue
+                    for j in range(i + 1, len(filings_sorted)):
+                        f_new = filings_sorted[j]
+                        if f_new >= eff_filed_10k:
+                            break
+                        v_new = by_filed[f_new].val
+                        if abs(v_new) < 0.03 or v_old * v_new <= 0:
+                            continue
+                        r_inv = v_old / v_new
+                        if abs(r_inv / factor - 1.0) <= 0.08:
+                            if earliest_q_post is None or f_new < earliest_q_post:
+                                earliest_q_post = f_new
+                            break
+            refined_events.append((earliest_q_post or eff_filed_10k, factor))
+        q_split_events = sorted(refined_events, key=lambda item: item[0])
+
     # Build standalone quarter map
     quarters: dict[str, dict[str, Any]] = {}
     all_q_ends = sorted(set(q_rev) | set(q_ni))
@@ -1825,7 +1881,7 @@ def extract_quarterly_financials(
         eps_r = q_eps.get(end)
         eps_val = None
         if eps_r is not None:
-            sf = _cumulative_split_factor(eps_r.filed, split_events)
+            sf = _cumulative_split_factor(eps_r.filed, q_split_events)
             eps_val = round(eps_r.val / sf, 4)
 
         # Drop placeholder 0.0 quarterly revenue when issuer reports substantial positive annual revenue (e.g. CBSH)
@@ -1894,7 +1950,7 @@ def extract_quarterly_financials(
             q3_ep = find_q3_ytd(ytd_eps)
             q4_eps = None
             if ann.get("eps_diluted") is not None and q3_ep is not None:
-                sf = _cumulative_split_factor(q3_ep.filed, split_events)
+                sf = _cumulative_split_factor(q3_ep.filed, q_split_events)
                 q4_eps = round(ann["eps_diluted"] - (q3_ep.val / sf), 4)
 
             quarters[fy_end] = {

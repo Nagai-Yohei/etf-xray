@@ -58,5 +58,37 @@
   "AVX": {
     "cik": null,
     "note": "Legacy AVX Corp. acquired by Kyocera in 2020; block reused microcap ticker CIK 0001826397"
+  },
+  "PARA": {
+    "cik": null,
+    "note": "Legacy Paramount Global merged into Skydance (PSKY) in 2025; block reused ticker CIK 0001826011 (Parabolic Technologies)"
+  },
+  "LB": {
+    "cik": null,
+    "note": "Legacy L Brands Inc. renamed Bath & Body Works (BBWI) in 2021; block reused ticker CIK 0001995807 (LandBridge Corp.)"
+  },
+  "NP": {
+    "cik": null,
+    "note": "Legacy Neenah Inc. merged into Mativ in 2022; block reused ticker CIK 0002067129 (Neptune Insurance Holdings)"
+  },
+  "PRE": {
+    "cik": null,
+    "note": "Legacy PartnerRe Ltd. acquired by Exor in 2016; block reused ticker CIK 0001876431 (Prenetics Global)"
+  },
+  "SE": {
+    "cik": null,
+    "note": "Legacy Spectra Energy Corp. acquired by Enbridge in 2017; block reused ticker CIK 0001703399 (Sea Limited)"
+  },
+  "STI": {
+    "cik": null,
+    "note": "Legacy SunTrust Banks Inc. merged into Truist (TFC) in 2019; block reused ticker CIK 0001881551 (Solidion Technology)"
+  },
+  "TEN": {
+    "cik": null,
+    "note": "Legacy Tenneco Inc. acquired by Apollo in 2022; block reused ticker CIK 0001166663 (Tsakos Energy Navigation)"
+  },
+  "VIVO": {
+    "cik": null,
+    "note": "Legacy Meridian Bioscience Inc. acquired in 2023; block reused ticker CIK 0001681348 (VivoPower PLC)"
   }
 }
