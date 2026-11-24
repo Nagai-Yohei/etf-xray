@@ -24,6 +24,9 @@ case "$CMD" in
   check)
     exec "$PYTHON_BIN" -m src.check "$@"
     ;;
+  test)
+    exec "$PYTHON_BIN" -m unittest discover -s "$ROOT_DIR/tests" -v "$@"
+    ;;
   init-db)
     exec "$PYTHON_BIN" -c "from src.db import init_db; init_db().close(); print('DB initialized.')"
     ;;
@@ -40,7 +43,8 @@ Usage: ./run.sh <command>
 Commands:
   build      Run full pipeline (fetch SEC filings -> XBRL -> metrics -> export dist/)
   export     Re-export dist/ (web assets + split JSON) from existing SQLite DB
-  check      Run data integrity checks + secret/PII leak scan
+  check      Run data integrity checks + secret/PII leak scan + unit tests
+  test       Run unit test suite (tests/)
   init-db    Initialize local SQLite database (data/market.db)
   serve      Start local HTTP server with production CSP headers
   deploy     Upload dist/ to Cloudflare Pages via Direct Upload API

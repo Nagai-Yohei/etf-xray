@@ -7,12 +7,14 @@ Usage:
 from __future__ import annotations
 
 import getpass
+import io
 import json
 import os
 import re
 import sqlite3
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 
 from src.env import DB_PATH, DIST_DIR, ENV_PATH, PROJECT_ROOT, parse_dotenv_file
@@ -538,6 +540,22 @@ def check_dist_json(errors: list[str]) -> str:
     return f"OK ({len(json_files)} JSON files)"
 
 
+def check_unit_tests(errors: list[str]) -> str:
+    """Run unit tests under tests/ and report any failures."""
+    tests_dir = PROJECT_ROOT / "tests"
+    if not tests_dir.is_dir():
+        return "SKIPPED (tests/ not found)"
+    suite = unittest.defaultTestLoader.discover(str(tests_dir), top_level_dir=str(PROJECT_ROOT))
+    stream = io.StringIO()
+    runner = unittest.TextTestRunner(stream=stream, verbosity=0)
+    result = runner.run(suite)
+    if not result.wasSuccessful():
+        for test_case, _tb in result.failures + result.errors:
+            errors.append(f"[UNIT] Failed: {test_case}")
+        return f"FAILED ({len(result.failures)} failure(s), {len(result.errors)} error(s))"
+    return f"OK ({result.testsRun} tests)"
+
+
 def main() -> int:
     errors: list[str] = []
     secrets = _load_secret_values()
@@ -558,6 +576,7 @@ def main() -> int:
         rel = str(fpath.relative_to(PROJECT_ROOT))
         _scan_file_content(fpath, rel, secrets, current_user, errors)
 
+    unit_status = check_unit_tests(errors)
     db_status = check_database(errors)
     dist_status = check_dist_json(errors)
 
@@ -570,6 +589,7 @@ def main() -> int:
     print("CHECK OK:")
     print(f"  - Git tracked check: OK ({tracked_count} files)")
     print(f"  - Secret/PII scan: OK ({len(repo_files)} repo files, {len(dist_files)} dist files)")
+    print(f"  - Unit tests: {unit_status}")
     print(f"  - SQLite DB: {db_status}")
     print(f"  - Dist JSON: {dist_status}")
     return 0
