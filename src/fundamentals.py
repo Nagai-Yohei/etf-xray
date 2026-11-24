@@ -1241,6 +1241,17 @@ def extract_annual_financials(
         dps_d_adj = _clean_per_share_dps(dps_d_adj, dps_d_factor)
         dps_p_adj = _clean_per_share_dps(dps_p_adj, dps_p_factor)
 
+        # Reject single-quarter dps_paid (~1/4 of annual implied) mis-tagged with an annual duration
+        # (e.g. AA $0.10 vs $0.40, TNET $0.275 vs $1.06, AGM $1.50 vs $6.00+, AGO $0.28 vs $1.12)
+        if (
+            dps_p_adj is not None
+            and dps_p_adj > 0.0
+            and est_dps is not None
+            and est_dps > 0.05
+            and 0.15 <= (dps_p_adj / est_dps) <= 0.35
+        ):
+            dps_p_adj = None
+
         # Validate dps_declared against dps_paid and implied DPS (catches PLD footnote sub-item leaks,
         # ALLY 0.0 placeholders, and single-quarter values mis-tagged with annual durations)
         if dps_d_adj is not None:
