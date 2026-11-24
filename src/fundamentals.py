@@ -642,6 +642,10 @@ def _estimate_split_events(
                 continue
             if abs(r_shares / r_ps - 1.0) <= 0.08:
                 return r_shares
+            # Allow slightly wider tolerance for large splits/reverse-splits (>= 3x or <= 1/3x)
+            # when a simultaneous merger/split-off modestly shifts comparative net income (e.g. SIRI 1:10 in 2024)
+            if (r_shares >= 3.0 or r_shares <= 0.34) and abs(r_shares / r_ps - 1.0) <= 0.16:
+                return r_shares
             # Handle simultaneous 1,000x / 1,000,000x share unit switch in the same 10-K (e.g. OKE 2012)
             for scale in (1_000.0, 1_000_000.0, 1e-3, 1e-6):
                 r_scaled = r_shares / scale
@@ -912,6 +916,18 @@ def extract_annual_financials(
         if prev_r is None or _rec_recency_key(rec) > _rec_recency_key(prev_r):
             rev_by_end_tag[k] = rec
 
+    # Replace placeholder 0.0 revenue tags with the highest-priority positive revenue tag for the same fy_end
+    # (e.g. FLS 2014-2025 Revenues=0.0 vs RevenueFromContractWithCustomerExcludingAssessedTax=$4.73B)
+    for fe, chosen_r in list(flow_usd["revenue"].items()):
+        if chosen_r.val == 0.0:
+            pos_alts = [
+                rec
+                for (r_fe, _r_tag), rec in rev_by_end_tag.items()
+                if r_fe == fe and rec.val > 0
+            ]
+            if pos_alts:
+                flow_usd["revenue"][fe] = min(pos_alts, key=lambda r: r.priority)
+
     both_rev_ends = [
         fe
         for fe in flow_usd["revenue"]
@@ -948,7 +964,7 @@ def extract_annual_financials(
     # (e.g. AIT 2011-2016 Revenues=$24M vs SalesRevenueNet=$2.75B & GrossProfit=$770M)
     for fe, gp_r in flow_usd["gross_profit"].items():
         cur_r = flow_usd["revenue"].get(fe)
-        if cur_r is not None and gp_r.val > 0 and cur_r.val > 0 and gp_r.val > cur_r.val * 1.02:
+        if cur_r is not None and gp_r.val > 0 and cur_r.val >= 0 and gp_r.val > cur_r.val * 1.02:
             better = [
                 rec
                 for (r_fe, _r_tag), rec in rev_by_end_tag.items()
@@ -1320,7 +1336,15 @@ def extract_annual_financials(
                 if fy_end in instant_usd["current_liabilities"]
                 else None,
                 "cash": instant_usd["cash"][fy_end].val
-                if (fy_end in instant_usd["cash"] and instant_usd["cash"][fy_end].val >= 0)
+                if (
+                    fy_end in instant_usd["cash"]
+                    and instant_usd["cash"][fy_end].val >= 0
+                    and not (
+                        fy_end in instant_usd["total_assets"]
+                        and instant_usd["total_assets"][fy_end].val > 0
+                        and instant_usd["cash"][fy_end].val > instant_usd["total_assets"][fy_end].val * 1.05
+                    )
+                )
                 else None,
                 "total_debt": total_debt_map.get(fy_end)
                 if (total_debt_map.get(fy_end) is not None and total_debt_map[fy_end] >= 0)
@@ -1329,7 +1353,7 @@ def extract_annual_financials(
                 if fy_end in instant_usd["goodwill"]
                 else None,
                 "intangibles": instant_usd["intangibles"][fy_end].val
-                if fy_end in instant_usd["intangibles"]
+                if (fy_end in instant_usd["intangibles"] and instant_usd["intangibles"][fy_end].val >= 0)
                 else None,
                 "dps_declared": round(dps_d_adj, 4) if dps_d_adj is not None else None,
                 "dps_paid": round(dps_p_adj, 4) if dps_p_adj is not None else None,
@@ -1496,6 +1520,10 @@ def extract_ttm_financials(
         if target_q_end is None:
             return ann_val, False
         recs = _iter_tag_records(company_facts, TAG_MAP_FLOW_USD[metric], ("USD",), QUARTERLY_FORMS)
+        if metric == "revenue":
+            nonzero = [r for r in recs if r.val != 0.0]
+            if nonzero:
+                recs = nonzero
         _, cur_v, prev_v = _find_latest_ytd_pair(
             recs,
             latest_fy_start,
@@ -1688,9 +1716,52 @@ def extract_quarterly_financials(
     """Extract up to max_quarters standalone (3-month) PL/CF quarters (deriving Q4 from 10-K minus Q3 YTD)."""
     all_forms = ANNUAL_FORMS | QUARTERLY_FORMS
 
-    q_rev = _select_best_single_quarter(
-        _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), all_forms)
-    )
+    raw_rev_all = _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), all_forms)
+    nonzero_rev_all = [r for r in raw_rev_all if r.val != 0.0]
+    rev_pool_all = nonzero_rev_all if nonzero_rev_all else raw_rev_all
+
+    def _override_partial_plain_rev(
+        selected: dict[str, FactRecord],
+        pool: list[FactRecord],
+        min_dur: int,
+        max_dur: int,
+    ) -> None:
+        """Override partial us-gaap:Revenues with ASC 606 total when Revenues is consistently a smaller subset (e.g. OWL)."""
+        by_end_tag: dict[tuple[str, str], FactRecord] = {}
+        for rec in pool:
+            dur = _duration_days(rec.start, rec.end)
+            if dur is None or not (min_dur <= dur <= max_dur):
+                continue
+            k = (rec.end, rec.tag)
+            prev = by_end_tag.get(k)
+            if prev is None or _rec_recency_key(rec) > _rec_recency_key(prev):
+                by_end_tag[k] = rec
+        both_ends = [
+            e
+            for e in selected
+            if (e, "us-gaap:Revenues") in by_end_tag
+            and (e, "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax") in by_end_tag
+        ]
+        if not both_ends:
+            return
+        all_lt = all(
+            by_end_tag[(e, "us-gaap:Revenues")].val
+            < by_end_tag[(e, "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax")].val
+            for e in both_ends
+        )
+        latest_e = max(selected)
+        plain_dropped = (latest_e, "us-gaap:Revenues") not in by_end_tag
+        if not (all_lt or plain_dropped):
+            return
+        for e, cur in list(selected.items()):
+            if cur.tag != "us-gaap:Revenues":
+                continue
+            asc = by_end_tag.get((e, "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"))
+            if asc is not None and asc.val > 0 and cur.val > 0 and asc.val > cur.val * 1.55:
+                selected[e] = asc
+
+    q_rev = _select_best_single_quarter(rev_pool_all)
+    _override_partial_plain_rev(q_rev, rev_pool_all, 70, 122)
     # Bank revenue synthesis (standalone quarters): also override ASC 606 fee-only revenue
     q_nii = _select_best_single_quarter(
         _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), all_forms)
@@ -1754,9 +1825,9 @@ def extract_quarterly_financials(
     )
 
     # YTD series (used to back-calculate Q4 and compute quarterly OCF/CapEx differences)
-    ytd_rev = _select_best_ytd_by_end(
-        _iter_tag_records(company_facts, TAG_MAP_FLOW_USD["revenue"], ("USD",), QUARTERLY_FORMS)
-    )
+    rev_pool_q = [r for r in rev_pool_all if r.form in QUARTERLY_FORMS]
+    ytd_rev = _select_best_ytd_by_end(rev_pool_q)
+    _override_partial_plain_rev(ytd_rev, rev_pool_q, 70, 305)
     ytd_nii = _select_best_ytd_by_end(
         _iter_tag_records(company_facts, BANK_NII_TAGS, ("USD",), QUARTERLY_FORMS)
     )
@@ -1858,7 +1929,9 @@ def extract_quarterly_financials(
                 eps_by_period[(rec.start, rec.end)][rec.filed] = rec
 
         refined_events: list[tuple[str, float]] = []
-        for eff_filed_10k, factor in q_split_events:
+        prev_eff_bound: str | None = None
+        for eff_filed_10k, factor in sorted(q_split_events, key=lambda item: item[0]):
+            d_eff = _parse_date(eff_filed_10k)
             earliest_q_post: str | None = None
             for by_filed in eps_by_period.values():
                 filings_sorted = sorted(by_filed.keys())
@@ -1873,6 +1946,11 @@ def extract_quarterly_financials(
                         f_new = filings_sorted[j]
                         if f_new >= eff_filed_10k:
                             break
+                        if prev_eff_bound is not None and f_new <= prev_eff_bound:
+                            continue
+                        d_f_new = _parse_date(f_new)
+                        if d_eff is not None and d_f_new is not None and (d_eff - d_f_new).days > 380:
+                            continue
                         v_new = by_filed[f_new].val
                         if abs(v_new) < 0.03 or v_old * v_new <= 0:
                             continue
@@ -1882,6 +1960,7 @@ def extract_quarterly_financials(
                                 earliest_q_post = f_new
                             break
             refined_events.append((earliest_q_post or eff_filed_10k, factor))
+            prev_eff_bound = eff_filed_10k
         q_split_events = sorted(refined_events, key=lambda item: item[0])
 
     # Build standalone quarter map
