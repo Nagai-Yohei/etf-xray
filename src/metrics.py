@@ -179,16 +179,16 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
     sector_by_sec = {r["security_id"]: r["sector_group"] for r in sec_rows}
     cik_overrides = load_cik_overrides()
 
-    # Latest and prior quarter-end price maps (prior price helps check if a post-10-K split already hit latest_price)
+    # Latest and recent quarter-end price maps (recent prices detect whether a post-10-K split already hit latest_price)
     latest_prices: dict[str, tuple[str, float]] = {}
-    prev_prices: dict[str, float] = {}
+    recent_prices: dict[str, list[float]] = {}
     for r in conn.execute(
         "SELECT security_id, as_of, price_usd FROM quarter_prices ORDER BY security_id, as_of ASC"
     ).fetchall():
         sid = r["security_id"]
-        if sid in latest_prices:
-            prev_prices[sid] = latest_prices[sid][1]
-        latest_prices[sid] = (r["as_of"], float(r["price_usd"]))
+        p_val = float(r["price_usd"])
+        latest_prices[sid] = (r["as_of"], p_val)
+        recent_prices.setdefault(sid, []).append(p_val)
 
     ttm_map = {
         r["security_id"]: r
@@ -297,12 +297,12 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                         if sp_filed > latest_price_date:
                             post_price_factor *= sp_f
                     if abs(post_price_factor - 1.0) > 0.05:
-                        prev_p = prev_prices.get(sec_id)
-                        # Only adjust if latest_price has not already jumped by ~1/post_price_factor vs prior quarter
-                        already_split_in_price = (
-                            prev_p is not None
-                            and prev_p > 0
-                            and abs((latest_price / prev_p) * post_price_factor - 1.0) <= 0.35
+                        prior_ps = recent_prices.get(sec_id, [])[:-1][-4:]
+                        # Only adjust if latest_price has not already shifted by ~1/post_price_factor vs recent quarters
+                        # (handles multi-ETF staggered dates where the split occurred 2-3 price points before the 10-Q filing, e.g. DD)
+                        already_split_in_price = any(
+                            p > 0 and abs((latest_price / p) * post_price_factor - 1.0) <= 0.35
+                            for p in prior_ps
                         )
                         if not already_split_in_price:
                             ratio_price = latest_price / post_price_factor
@@ -601,7 +601,12 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             rev_cagr_5y = _calc_cagr(v5, lv, span5)
 
         if not ann_rows:
-            notes.append("No SEC XBRL companyfacts available")
+            if sec_id.endswith(".OLD"):
+                notes.append(
+                    "Legacy pre-merger/pre-reorganization issuer sharing a reused ticker; held separately from the successor entity during overlap periods"
+                )
+            else:
+                notes.append("No SEC XBRL companyfacts available")
 
         records_to_insert.append(
             (

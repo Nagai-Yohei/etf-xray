@@ -1828,11 +1828,16 @@ def extract_quarterly_financials(
             sf = _cumulative_split_factor(eps_r.filed, split_events)
             eps_val = round(eps_r.val / sf, 4)
 
+        # Drop placeholder 0.0 quarterly revenue when issuer reports substantial positive annual revenue (e.g. CBSH)
+        rev_q_val = q_rev[end].val if end in q_rev else None
+        if rev_q_val == 0.0 and any((a.get("revenue") or 0) > 10_000_000 for a in annual_rows):
+            rev_q_val = None
+
         quarters[end] = {
             "period_end": end,
             "period_start": anchor.start if anchor else None,
             "fp": None,
-            "revenue": q_rev[end].val if end in q_rev else None,
+            "revenue": rev_q_val,
             "operating_income": q_op[end].val if end in q_op else None,
             "pretax_income": q_pretax[end].val if end in q_pretax else None,
             "net_income": q_ni[end].val if end in q_ni else None,
@@ -1869,6 +1874,9 @@ def extract_quarterly_financials(
             if ann_val is None or q3_rec is None:
                 return None
             q4_val = ann_val - q3_rec.val
+            if ann_val > 0 and (q3_rec.val <= 0 or q4_val > ann_val * 0.70):
+                # Reject derived Q4 when Q3 YTD is zero/negative or <30% of annual (10-Q vs 10-K tag mismatch, e.g. CBSH/OWL/ZION)
+                return None
             if q3_rec.val > 0 and (q4_val <= 0 or q4_val < 0.15 * (q3_rec.val / 3.0)):
                 # Discontinued-ops restatement mismatch: compare against contemporaneous 10-K on Q3's basis
                 orig_r = orig_ann_rev_by_end_tag.get((fy_end, q3_rec.tag)) or orig_ann_rev_by_end.get(fy_end)

@@ -1305,10 +1305,15 @@ export async function renderStockView(
         bsNotes.push(
           "Financial balance sheet: ROIC and Net Debt / FCF are not applicable (ROE is shown instead); equity ratio reflects regulatory and sector leverage norms."
         );
-      } else if (sectorGroup === "telecom") {
+      } else {
         bsNotes.push(
-          "Telecom / infrastructure: a Current Ratio below 1.0x is typical due to recurring subscription cash flows."
+          "ROIC = NOPAT ÷ (Equity + Debt − Cash), using an effective tax rate clamped to 0%–40% (21% default), consistent across KPI and table."
         );
+        if (sectorGroup === "telecom") {
+          bsNotes.push(
+            "Telecom / infrastructure: a Current Ratio below 1.0x is typical due to recurring subscription cash flows."
+          );
+        }
       }
       if (!hasAnyValue(annual.map((r) => r.total_debt))) {
         bsNotes.push("No short-term or long-term debt reported in standard SEC XBRL balance sheet tags.");
