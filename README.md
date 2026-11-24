@@ -10,6 +10,7 @@ Live site: https://etf-xray.pages.dev
 - VOO — Vanguard S&P 500 ETF (2011-03 – present)
 - SCHD — Schwab U.S. Dividend Equity ETF (2011-11 – present)
 - HDV — iShares Core High Dividend ETF (2011-04 – present)
+- DIA — SPDR Dow Jones Industrial Average ETF Trust (2011-04 – present; semi-annual `N-30D` through 2019-04, quarterly `N-PORT-P` from 2019-10)
 
 ## Quick Start
 
@@ -40,7 +41,7 @@ Set `SEC_USER_AGENT` in `.env` to your app/name and contact email per SEC EDGAR 
 ## Overview
 
 - `config/` — Target ETF definitions (`etfs.json`), curated ticker overrides (`manual_tickers.csv`), and CIK chains (`cik_overrides.json`)
-- `src/` — EDGAR client, filing adapters (`N-PORT-P`, Schwab/Vanguard/iShares legacy), entity resolution, modular XBRL extractor (`src/fundamentals.py` facade + `src/xbrl/`), sector classification (`src/sectors.py`), metrics, static JSON exporter, integrity checker, local server, and Cloudflare deployer
+- `src/` — EDGAR client, filing adapters (`N-PORT-P`, Schwab/Vanguard/iShares/SPDR legacy), entity resolution, modular XBRL extractor (`src/fundamentals.py` facade + `src/xbrl/`), sector classification (`src/sectors.py`), metrics, static JSON exporter, integrity checker, local server, and Cloudflare deployer
 - `tests/` — Standard-library `unittest` regression suite covering XBRL extraction, metrics, entity resolution, and sector rules
 - `web/` — Vanilla HTML/CSS/ES Modules frontend with locally bundled Chart.js and strict CSP (`_headers`)
 
@@ -50,6 +51,6 @@ Set `CLOUDFLARE_API_TOKEN` (scoped to Cloudflare Pages: Edit), `CLOUDFLARE_ACCOU
 
 ## Notes & License
 
-Data is compiled from SEC EDGAR (`N-PORT-P`, `N-CSR`, `N-CSRS`, `N-Q`, `10-K`/`10-Q` XBRL CompanyFacts) and OpenFIGI. Quarter-end share prices are implied from reported ETF holdings (`value_usd / shares`). Known SEC N-Q to N-PORT transition filing gaps (no public filing exists for those period ends): `SCHD 2019-05-31`, `VOO 2019-03-31`, `VYM 2019-07-31`, and `HDV 2019-07-31`. For informational purposes only; not investment advice.
+Data is compiled from SEC EDGAR (`N-PORT-P`, `N-CSR`, `N-CSRS`, `N-Q`, `N-30D`, `10-K`/`10-Q` XBRL CompanyFacts) and OpenFIGI. Quarter-end share prices are implied from reported ETF holdings (`value_usd / shares`). Known SEC N-Q to N-PORT transition filing gaps (no public filing exists for those period ends): `SCHD 2019-05-31`, `VOO 2019-03-31`, `VYM 2019-07-31`, and `HDV 2019-07-31`. For informational purposes only; not investment advice.
 
 Licensed under the [MIT License](LICENSE).

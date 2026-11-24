@@ -61,5 +61,19 @@
     "legacy_adapter": "vanguard_legacy",
     "legacy_fund_title": "500 Index Fund",
     "active": true
+  },
+  {
+    "etf_id": "DIA",
+    "name": "SPDR Dow Jones Industrial Average ETF Trust",
+    "issuer": "State Street (SPDR)",
+    "cik": "0001041130",
+    "series_id": null,
+    "series_name_patterns": [
+      "SPDR DOW JONES INDUSTRIAL AVERAGE ETF TRUST"
+    ],
+    "structure": "uit",
+    "fiscal_year_end_month": 10,
+    "legacy_adapter": "spdr_legacy",
+    "active": true
   }
 ]

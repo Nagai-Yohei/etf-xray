@@ -204,16 +204,20 @@ def fetch_etf_nport_filings(
     all_nport = client.get_all_filings(cik, forms={"NPORT-P", "NPORT-P/A"})
     by_accn = {f["accessionNumber"]: f for f in all_nport}
 
-    # Filter candidate filings whose primary_doc.xml contains the target fund name via EFTS
-    candidate_accns: dict[str, dict[str, str]] = {}
-    for idx, pat in enumerate(patterns):
-        cache_key = f"{etf_id}_nport_name" if idx == 0 else f"{etf_id}_nport_name_{idx}"
-        hits = client.search_efts_accessions(f'"{pat}"', "NPORT-P", cache_key)
-        for hit in hits:
-            hid = str(hit.get("_id") or "")
-            adsh = str((hit.get("_source") or {}).get("adsh") or "")
-            if adsh in by_accn and hid.endswith("primary_doc.xml"):
-                candidate_accns[adsh] = by_accn[adsh]
+    # Single-fund UITs (e.g. DIA) have no series_id; every NPORT-P under the CIK belongs to the ETF
+    if series_id is None:
+        candidate_accns = dict(by_accn)
+    else:
+        # Filter candidate filings whose primary_doc.xml contains the target fund name via EFTS
+        candidate_accns = {}
+        for idx, pat in enumerate(patterns):
+            cache_key = f"{etf_id}_nport_name" if idx == 0 else f"{etf_id}_nport_name_{idx}"
+            hits = client.search_efts_accessions(f'"{pat}"', "NPORT-P", cache_key)
+            for hit in hits:
+                hid = str(hit.get("_id") or "")
+                adsh = str((hit.get("_source") or {}).get("adsh") or "")
+                if adsh in by_accn and hid.endswith("primary_doc.xml"):
+                    candidate_accns[adsh] = by_accn[adsh]
 
     # Prefer the latest filingDate when amendments (NPORT-P/A) exist for the same reportDate
     by_as_of: dict[str, FilingHoldings] = {}
