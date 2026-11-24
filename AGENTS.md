@@ -44,14 +44,15 @@ Working rules for AI coding agents and maintainers. Read this file completely be
   - Priority: `manual_tickers.csv` (CUSIP) -> OpenFIGI (CUSIP/ISIN) -> legacy name bridge (unambiguous N-PORT names only) -> `manual_tickers.csv` (name) -> SEC `company_tickers.json`.
   - Raise an exception if duplicate `security_id`s appear within the same `(etf_id, as_of)`.
   - Disambiguate dual-class shares (e.g., `GOOGL`/`GOOG`, `BRK.A`/`BRK.B`, `CWEN`/`CWEN.A`) via CUSIP or exact manual overrides.
-- **SEC XBRL (`src/fundamentals.py`, `src/metrics.py`)**:
-  - Infer split factors across overlapping 10-K years so historical per-share metrics (`EPS`, `DPS`) stay split-adjusted.
-  - Compute payout ratios on a same-fiscal-year basis (`DPS / EPS`, `DividendsPaid / NetIncome`, `DividendsPaid / FCF`).
+- **SEC XBRL (`src/fundamentals.py`, `src/xbrl/`, `src/metrics.py`, `src/sectors.py`)**:
+  - `src/fundamentals.py` is the public facade over `src/xbrl/` (`tags.py`, `records.py`, `splits.py`, `annual.py`, `quarterly.py`).
+  - Infer split factors across overlapping 10-K/10-Q periods so historical per-share metrics (`EPS`, `DPS`) stay split-adjusted.
+  - Compute payout ratios on a same-fiscal-year basis (`DPS / EPS`, `DividendsPaid / NetIncome`, `DividendsPaid / FCF`) and suppress sector-distorted ratios (REIT GAAP payouts, bank/insurer ROIC/FCF) using official SEC SIC codes (`src/sectors.py`).
   - Derive implied quarter-end prices from ETF holdings (`value_usd / shares`).
 
 ---
 
 ## 3. Mandatory Post-Change Verification
 
-1. Run `./run.sh check` and confirm all checks pass (Git tracked files, secret/PII scan, SQLite integrity, and `dist/` JSON validation).
+1. Run `./run.sh check` and confirm all checks pass (Git tracked files, secret/PII scan, `tests/` unit tests, SQLite integrity, and `dist/` JSON validation).
 2. After Web UI changes, serve locally with `./run.sh serve` and verify both ETF View (column customization, date switching, row navigation) and Stock View (annual/quarterly charts, tables, ETF ownership history) in a browser.

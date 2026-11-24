@@ -320,6 +320,37 @@ class TestStockSplits(unittest.TestCase):
         self.assertEqual(splits, [])
         self.assertAlmostEqual(rows[-1]["eps_diluted"], 3.00, places=4)
 
+    def test_post_10k_split_detected_via_basic_shares_when_10q_omits_eps(self) -> None:
+        """CVNA-style: 5:1 split after 10-K where 10-Qs omit quarterly EPS."""
+        cf = _make_facts(
+            {
+                "Revenues": {"USD": [_dur("2025-01-01", "2025-12-31", 20_000_000_000, "2026-02-18")]},
+                "NetIncomeLoss": {"USD": [_dur("2025-01-01", "2025-12-31", 1_900_000_000, "2026-02-18")]},
+                "EarningsPerShareDiluted": {
+                    "USD/shares": [_dur("2025-01-01", "2025-12-31", 8.45, "2026-02-18")]
+                },
+                "WeightedAverageNumberOfDilutedSharesOutstanding": {
+                    "shares": [
+                        _dur("2025-01-01", "2025-12-31", 224_000_000, "2026-02-18"),
+                        _dur("2025-01-01", "2025-09-30", 720_000_000, "2026-10-28", "10-Q"),
+                        _dur("2026-01-01", "2026-09-30", 740_000_000, "2026-10-28", "10-Q"),
+                    ]
+                },
+                "WeightedAverageNumberOfSharesOutstandingBasic": {
+                    "shares": [
+                        _dur("2025-01-01", "2025-12-31", 137_634_000, "2026-02-18"),
+                        _dur("2025-01-01", "2025-06-30", 673_699_000, "2026-07-29", "10-Q"),
+                        _dur("2025-01-01", "2025-09-30", 681_236_000, "2026-10-28", "10-Q"),
+                        _dur("2026-01-01", "2026-06-30", 715_728_000, "2026-07-29", "10-Q"),
+                        _dur("2026-01-01", "2026-09-30", 717_456_000, "2026-10-28", "10-Q"),
+                    ]
+                },
+            }
+        )
+        rows, splits = extract_annual_financials(cf)
+        self.assertEqual(splits, [("2026-07-29", 5.0)])
+        self.assertAlmostEqual(rows[-1]["eps_diluted"], 8.45 / 5.0, places=4)
+
 
 class TestRevenueExtraction(unittest.TestCase):
     def test_zero_revenue_placeholder_overridden_by_asc606(self) -> None:

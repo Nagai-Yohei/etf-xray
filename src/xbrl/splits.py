@@ -14,6 +14,7 @@ from src.xbrl.records import (
     _parse_date,
 )
 from src.xbrl.tags import (
+    ANNUAL_FORMS,
     KNOWN_SPLIT_RATIOS,
     QUARTERLY_FORMS,
     TAG_MAP_FLOW_PER_SHARE,
@@ -228,6 +229,62 @@ def _detect_post_10k_split(
                     if any(abs((af_r * m) / r_eps_inv - 1.0) <= tol for m in (1.0, 1e3, 1e6, 1e-3, 1e-6)):
                         post_filings.append(af)
                         break
+
+    # Fallback for issuers that omit quarterly EPS from 10-Qs (e.g. CVNA 5:1 split in Q2 2026):
+    # compare post-10-K 10-Q comparative prior-FY YTD basic shares against the latest 10-K annual basic shares.
+    if not post_ratios:
+        has_post_q_eps = any(
+            f > latest_10k_filed for eps_by_f in q_eps_idx.values() for f in eps_by_f
+        )
+        if not has_post_q_eps:
+            basic_10k = [
+                r
+                for r in _iter_tag_records(
+                    company_facts,
+                    [("us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic")],
+                    ("shares",),
+                    ANNUAL_FORMS,
+                )
+                if _is_annual_flow(r) and r.val > 0
+            ]
+            if basic_10k:
+                latest_basic_10k = max(basic_10k, key=lambda r: (r.end, r.filed))
+                d_fys = _parse_date(latest_basic_10k.start)
+                d_fye = _parse_date(latest_basic_10k.end)
+                if d_fys is not None and d_fye is not None:
+                    basic_q = _iter_tag_records(
+                        company_facts,
+                        [("us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic")],
+                        ("shares",),
+                        QUARTERLY_FORMS,
+                    )
+                    comp_pts: list[tuple[float, str]] = []
+                    cur_pts: list[float] = []
+                    for r in basic_q:
+                        if r.filed <= latest_basic_10k.filed or r.val <= 0 or not r.start:
+                            continue
+                        dur = _duration_days(r.start, r.end)
+                        if dur is None or not (150 <= dur <= 305):
+                            continue
+                        ds, de = _parse_date(r.start), _parse_date(r.end)
+                        if ds is None or de is None:
+                            continue
+                        if abs((ds - d_fys).days) <= 12 and de <= d_fye:
+                            comp_pts.append((r.val / latest_basic_10k.val, r.filed))
+                        elif ds > d_fye:
+                            cur_pts.append(r.val / latest_basic_10k.val)
+                    if comp_pts and cur_pts:
+                        med_comp = statistics.median(x[0] for x in comp_pts)
+                        for known in KNOWN_SPLIT_RATIOS:
+                            if (
+                                (known >= 2.0 or known <= 0.5)
+                                and all(abs(r / known - 1.0) <= 0.03 for r, _ in comp_pts)
+                                and all(abs(r / known - 1.0) <= 0.15 for r in cur_pts)
+                                and abs(med_comp / known - 1.0) <= 0.025
+                            ):
+                                post_ratios.append(known)
+                                post_filings.append(min(f for _, f in comp_pts))
+                                break
 
     if not post_ratios or not post_filings:
         return None

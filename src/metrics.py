@@ -21,6 +21,7 @@ from src.fundamentals import (
     load_cik_overrides,
     merge_company_facts,
 )
+from src.identify import is_non_common_ticker
 
 
 def _effective_dps(row: sqlite3.Row | dict[str, Any]) -> tuple[float | None, bool]:
@@ -208,9 +209,14 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
         latest_price_date = lp[0] if lp else None
         latest_price = lp[1] if lp else None
 
-        ann_rows = annual_by_sec.get(sec_id, [])
-        latest_ann = ann_rows[-1] if ann_rows else None
-        ttm = ttm_map.get(sec_id)
+        if is_non_common_ticker(sec_id) or sec_id.upper().endswith(".OLD"):
+            ann_rows = []
+            latest_ann = None
+            ttm = None
+        else:
+            ann_rows = annual_by_sec.get(sec_id, [])
+            latest_ann = ann_rows[-1] if ann_rows else None
+            ttm = ttm_map.get(sec_id)
         notes: list[str] = []
 
         # Headline values from TTM / latest annual row

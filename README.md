@@ -30,7 +30,9 @@ Set `SEC_USER_AGENT` in `.env` to your app/name and contact email per SEC EDGAR 
 ./run.sh build                      # Fetch SEC filings -> XBRL -> metrics -> export dist/
 ./run.sh build --skip-etf --offline # Fast offline rebuild from local cache
 ./run.sh export                     # Re-export dist/ from existing SQLite DB
-./run.sh check                      # Run data integrity checks and secret/PII scan
+./run.sh test                       # Run unit test suite (tests/)
+./run.sh check                      # Run unit tests, data integrity checks, and secret/PII scan
+./run.sh refresh                    # Run build + check (add --deploy to upload if check passes)
 ./run.sh serve                      # Preview dist/ locally at http://127.0.0.1:8787/
 ./run.sh deploy                     # Upload dist/ to Cloudflare Pages via Direct Upload API
 ```
@@ -38,7 +40,8 @@ Set `SEC_USER_AGENT` in `.env` to your app/name and contact email per SEC EDGAR 
 ## Overview
 
 - `config/` — Target ETF definitions (`etfs.json`), curated ticker overrides (`manual_tickers.csv`), and CIK chains (`cik_overrides.json`)
-- `src/` — EDGAR client, filing adapters (`N-PORT-P`, Schwab/Vanguard/iShares legacy), entity resolution, XBRL extractor, metrics, static JSON exporter, integrity checker, local server, and Cloudflare deployer
+- `src/` — EDGAR client, filing adapters (`N-PORT-P`, Schwab/Vanguard/iShares legacy), entity resolution, modular XBRL extractor (`src/fundamentals.py` facade + `src/xbrl/`), sector classification (`src/sectors.py`), metrics, static JSON exporter, integrity checker, local server, and Cloudflare deployer
+- `tests/` — Standard-library `unittest` regression suite covering XBRL extraction, metrics, entity resolution, and sector rules
 - `web/` — Vanilla HTML/CSS/ES Modules frontend with locally bundled Chart.js and strict CSP (`_headers`)
 
 ## Deployment
