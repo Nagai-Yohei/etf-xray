@@ -299,11 +299,22 @@ function renderEtfCardsSection(meta, navigate) {
   });
 
   return el("section", { className: "home-section" }, [
-    el("div", { className: "home-section-head" }, [
-      el("h2", { className: "home-section-title", text: "Covered ETFs" }),
-      el("span", {
-        className: "home-section-sub",
-        text: "Select an ETF to explore historical constituents, rebalance turnover, and holding tenure. Latest reporting dates differ by fund (fiscal quarter-ends).",
+    el("div", { className: "home-section-head home-section-head-row" }, [
+      el("div", {}, [
+        el("h2", { className: "home-section-title", text: "Covered ETFs" }),
+        el("span", {
+          className: "home-section-sub",
+          text: "Select an ETF to explore historical constituents, rebalance turnover, and holding tenure. Latest reporting dates differ by fund (fiscal quarter-ends).",
+        }),
+      ]),
+      el("a", {
+        href: "#/compare",
+        className: "btn btn-sm home-compare-cta",
+        text: "Compare ETF Overlap →",
+        onClick: (e) => {
+          e.preventDefault();
+          navigate("#/compare");
+        },
       }),
     ]),
     el("div", { className: "etf-card-grid" }, cards),

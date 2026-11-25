@@ -3,10 +3,12 @@
  * Routes:
  *   #/                  (Home overview)
  *   #/etf/<ETF_ID>      (ETF holdings & history view)
+ *   #/compare           (ETF overlap & comparison view)
  *   #/stock/<SECURITY_ID> (Individual stock fundamentals view)
  */
 
 import { getMeta, getStocksIndex } from "./api.js";
+import { renderCompareView } from "./compare-view.js";
 import { clearNode, el, fmtPct } from "./dom.js";
 import { renderEtfView } from "./etf-view.js";
 import { renderHomeView } from "./home-view.js";
@@ -14,6 +16,7 @@ import { renderStockView } from "./stock-view.js";
 
 const rootEl = document.getElementById("app-root");
 const etfSwitcher = document.getElementById("etf-switcher");
+const navCompareLink = document.getElementById("nav-compare-link");
 const searchInput = document.getElementById("global-search-input");
 const searchDropdown = document.getElementById("global-search-results");
 const topbarContext = document.getElementById("topbar-context");
@@ -109,6 +112,7 @@ window.addEventListener("scroll", scheduleStickySync, { passive: true });
 window.addEventListener("resize", scheduleStickySync, { passive: true });
 
 let metaData = null;
+let stocksIndexMap = {};
 let stocksList = [];
 let currentEtfId = "SCHD";
 let lastBackTarget = null;
@@ -233,6 +237,9 @@ async function handleRoute() {
   const [pathPart, queryPart] = rawHash.replace(/^#\/?/, "").split("?");
   const parts = pathPart.split("/").filter(Boolean);
   const params = new URLSearchParams(queryPart || "");
+  if (navCompareLink) {
+    navCompareLink.classList.toggle("active", parts[0] === "compare");
+  }
 
   try {
     let nextCleanup = null;
@@ -242,6 +249,33 @@ async function handleRoute() {
       setTopbarContext(null);
       document.title = "ETF X-Ray — U.S. ETF Holdings & SEC Fundamentals";
       nextCleanup = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      if (isStale()) {
+        if (typeof nextCleanup === "function") nextCleanup();
+        return;
+      }
+      cleanupView = nextCleanup;
+      window.scrollTo({ top: 0 });
+    } else if (parts[0] === "compare") {
+      etfSwitcher.value = "";
+      const reqA = params.get("a") ? params.get("a").toUpperCase() : null;
+      const reqB = params.get("b") ? params.get("b").toUpperCase() : null;
+      setTopbarContext(null);
+      nextCleanup = await renderCompareView(
+        rootEl,
+        metaData,
+        stocksIndexMap,
+        reqA,
+        reqB,
+        navigate,
+        (a, b) => {
+          if (isStale()) return;
+          lastBackTarget = {
+            href: `#/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+            label: `← Back to Compare (${a} vs ${b})`,
+          };
+        },
+        isStale
+      );
       if (isStale()) {
         if (typeof nextCleanup === "function") nextCleanup();
         return;
@@ -328,6 +362,7 @@ async function init() {
   try {
     const [meta, stocksIndex] = await Promise.all([getMeta(), getStocksIndex()]);
     metaData = meta;
+    stocksIndexMap = stocksIndex;
     stocksList = Object.values(stocksIndex);
 
     clearNode(etfSwitcher);
