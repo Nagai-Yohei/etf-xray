@@ -276,6 +276,16 @@ REIT_LEASE_TAGS = [
     ("us-gaap", "OperatingLeaseLeaseIncome"),
     ("us-gaap", "RealEstateRevenueNet"),
 ]
+# Common-only equity statement dividend tag and preferred dividend tags (used to exclude preferred
+# dividends when cash-flow statements only report combined PaymentsOfDividends / PaymentsOfOrdinaryDividends)
+COMMON_DIV_CASH_TAGS = [
+    ("us-gaap", "DividendsCommonStockCash"),
+]
+PREFERRED_DIV_TAGS = [
+    ("us-gaap", "PaymentsOfDividendsPreferredStockAndPreferenceStock"),
+    ("us-gaap", "DividendsPreferredStockCash"),
+    ("us-gaap", "PreferredStockDividendsIncomeStatementImpact"),
+]
 
 TAG_MAP_FLOW_PER_SHARE: dict[str, list[tuple[str, str]]] = {
     "eps_diluted": [

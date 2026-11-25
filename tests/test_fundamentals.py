@@ -598,6 +598,103 @@ class TestDividendValidation(unittest.TestCase):
         rows, _ = extract_annual_financials(cf)
         self.assertEqual(rows[0]["dividends_paid"], 2_500_000_000.0)
 
+    def test_preferred_dividends_excluded_via_common_cash_tag(self) -> None:
+        """AGM/OXY-style: combined PaymentsOfOrdinaryDividends switches to DividendsCommonStockCash."""
+        cf = _make_facts(
+            {
+                "Revenues": {"USD": [_dur("2025-01-01", "2025-12-31", 400_000_000, "2026-02-19")]},
+                "NetIncomeLoss": {"USD": [_dur("2025-01-01", "2025-12-31", 180_000_000, "2026-02-19")]},
+                "WeightedAverageNumberOfDilutedSharesOutstanding": {
+                    "shares": [_dur("2025-01-01", "2025-12-31", 10_983_000, "2026-02-19")]
+                },
+                "PaymentsOfOrdinaryDividends": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 89_043_000, "2026-02-19")]
+                },
+                "DividendsCommonStockCash": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 65_439_000, "2026-02-19")]
+                },
+                "DividendsPreferredStockCash": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 24_922_000, "2026-02-19")]
+                },
+                # Single-quarter DPS mis-tagged as annual should still be rejected against common implied DPS (~$5.96)
+                "CommonStockDividendsPerShareDeclared": {
+                    "USD/shares": [_dur("2025-01-01", "2025-12-31", 1.50, "2026-02-19")]
+                },
+                "CommonStockDividendsPerShareCashPaid": {
+                    "USD/shares": [_dur("2025-01-01", "2025-12-31", 1.50, "2026-02-19")]
+                },
+            }
+        )
+        rows, _ = extract_annual_financials(cf)
+        self.assertEqual(rows[0]["dividends_paid"], 65_439_000.0)
+        self.assertIsNone(rows[0]["dps_declared"])
+        self.assertIsNone(rows[0]["dps_paid"])
+
+    def test_preferred_only_dividends_zeroed_for_non_common_payer(self) -> None:
+        """BA/COHR-style: 100% preferred dividends in PaymentsOfDividends with no common DPS -> None."""
+        cf = _make_facts(
+            {
+                "Revenues": {"USD": [_dur("2025-01-01", "2025-12-31", 75_000_000_000, "2026-02-01")]},
+                "NetIncomeLoss": {"USD": [_dur("2025-01-01", "2025-12-31", -5_000_000_000, "2026-02-01")]},
+                "WeightedAverageNumberOfDilutedSharesOutstanding": {
+                    "shares": [_dur("2025-01-01", "2025-12-31", 1_012_000_000, "2026-02-01")]
+                },
+                "PaymentsOfDividends": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 331_000_000, "2026-02-01")]
+                },
+                "DividendsPreferredStockCash": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 345_000_000, "2026-02-01")]
+                },
+            }
+        )
+        rows, _ = extract_annual_financials(cf)
+        self.assertIsNone(rows[0]["dividends_paid"])
+
+    def test_preferred_dividends_subtracted_only_when_corroborated_by_dps(self) -> None:
+        """GS-style subtraction when combined, and NO double-subtraction when CF tag is already common-only."""
+        cf_combined = _make_facts(
+            {
+                "Revenues": {"USD": [_dur("2025-01-01", "2025-12-31", 55_000_000_000, "2026-02-25")]},
+                "NetIncomeLoss": {"USD": [_dur("2025-01-01", "2025-12-31", 15_000_000_000, "2026-02-25")]},
+                "WeightedAverageNumberOfDilutedSharesOutstanding": {
+                    "shares": [_dur("2025-01-01", "2025-12-31", 317_600_000, "2026-02-25")]
+                },
+                "CommonStockDividendsPerShareDeclared": {
+                    "USD/shares": [_dur("2025-01-01", "2025-12-31", 14.00, "2026-02-25")]
+                },
+                "PaymentsOfDividends": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 5_277_000_000, "2026-02-25")]
+                },
+                "PreferredStockDividendsIncomeStatementImpact": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 876_000_000, "2026-02-25")]
+                },
+            }
+        )
+        rows_comb, _ = extract_annual_financials(cf_combined)
+        self.assertEqual(rows_comb[0]["dividends_paid"], 4_401_000_000.0)
+
+        # Already common-only PaymentsOfDividends ($4,446M ~= 317.6M * $14) must NOT subtract preferred again
+        cf_already_common = _make_facts(
+            {
+                "Revenues": {"USD": [_dur("2025-01-01", "2025-12-31", 55_000_000_000, "2026-02-25")]},
+                "NetIncomeLoss": {"USD": [_dur("2025-01-01", "2025-12-31", 15_000_000_000, "2026-02-25")]},
+                "WeightedAverageNumberOfDilutedSharesOutstanding": {
+                    "shares": [_dur("2025-01-01", "2025-12-31", 317_600_000, "2026-02-25")]
+                },
+                "CommonStockDividendsPerShareDeclared": {
+                    "USD/shares": [_dur("2025-01-01", "2025-12-31", 14.00, "2026-02-25")]
+                },
+                "PaymentsOfDividends": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 4_446_000_000, "2026-02-25")]
+                },
+                "PreferredStockDividendsIncomeStatementImpact": {
+                    "USD": [_dur("2025-01-01", "2025-12-31", 876_000_000, "2026-02-25")]
+                },
+            }
+        )
+        rows_ok, _ = extract_annual_financials(cf_already_common)
+        self.assertEqual(rows_ok[0]["dividends_paid"], 4_446_000_000.0)
+
 
 class TestBalanceSheetAndEntities(unittest.TestCase):
     def test_q4_derived_revenue_rejected_when_q3_ytd_too_small(self) -> None:

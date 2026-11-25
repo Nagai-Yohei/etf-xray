@@ -26,6 +26,8 @@ from src.xbrl.tags import (
     ANNUAL_FORMS,
     BANK_NII_TAGS,
     BANK_NONINT_TAGS,
+    COMMON_DIV_CASH_TAGS,
+    PREFERRED_DIV_TAGS,
     QUARTERLY_FORMS,
     REIT_LEASE_TAGS,
     TAG_MAP_FLOW_PER_SHARE,
@@ -259,6 +261,61 @@ def _clear_stale_special_dps(rows: list[dict[str, Any]]) -> None:
                     cur_r["dps_declared"] = None
 
 
+def _strip_preferred_dividend(
+    div_rec: FactRecord | None,
+    div_paid_val: float | None,
+    common_div_rec: FactRecord | None,
+    pref_div_rec: FactRecord | None,
+    dps_d_adj: float | None,
+    dps_p_adj: float | None,
+    sh_dil_adj: float | None,
+    sh_out_adj: float | None,
+) -> float | None:
+    """Exclude preferred stock dividends when cash-flow tags report combined dividends.
+
+    Prevents preferred payouts from inflating common-stock dividend yields, payout ratios,
+    and total return (e.g. AGM, BA, COHR, OXY, BAC, GS, SCHW) while guarding against
+    double-subtraction when the cash-flow tag is already common-only.
+    """
+    if (
+        div_rec is None
+        or div_paid_val is None
+        or div_paid_val <= 0
+        or div_rec.tag not in ("us-gaap:PaymentsOfDividends", "us-gaap:PaymentsOfOrdinaryDividends")
+        or pref_div_rec is None
+    ):
+        return div_paid_val
+
+    pv = abs(pref_div_rec.val)
+    if pv <= 0:
+        return div_paid_val
+
+    # 1. Prefer explicit common-only equity-statement cash dividend when (common + preferred) ~= combined CF total
+    if common_div_rec is not None:
+        ceq = abs(common_div_rec.val)
+        if ceq > 0 and ceq < div_paid_val * 0.98 and 0.65 * div_paid_val <= (ceq + pv) <= 1.35 * div_paid_val:
+            return ceq
+
+    # 2. Otherwise subtract preferred dividends only when corroborated (prevents double-subtraction):
+    #    (a) DPS * shares is closer to (total - preferred) than to total (e.g. GS, VCTR, UMBF)
+    #    (b) No per-share common DPS is reported and total <= 1.15 * preferred (100% preferred, e.g. BA, COHR)
+    ref_dps = (
+        dps_d_adj
+        if (dps_d_adj is not None and dps_d_adj > 0)
+        else (dps_p_adj if (dps_p_adj is not None and dps_p_adj > 0) else None)
+    )
+    ref_sh = max(sh_dil_adj or 0.0, sh_out_adj or 0.0)
+    if ref_dps is not None and ref_sh > 0:
+        est_common = ref_dps * ref_sh
+        net_val = max(0.0, div_paid_val - pv)
+        if abs(net_val - est_common) < abs(div_paid_val - est_common) and pv >= div_paid_val * 0.03:
+            return net_val
+    elif ref_dps is None and div_paid_val <= pv * 1.15:
+        return None
+
+    return div_paid_val
+
+
 def extract_annual_financials(
     company_facts: dict[str, Any],
     min_year: int = 2009,
@@ -400,6 +457,12 @@ def extract_annual_financials(
             ANNUAL_FORMS | QUARTERLY_FORMS,
         )
     )
+    common_div_eq_map = _select_best_annual_flow(
+        _iter_tag_records(company_facts, COMMON_DIV_CASH_TAGS, ("USD",), ANNUAL_FORMS)
+    )
+    pref_div_map = _select_best_annual_flow(
+        _iter_tag_records(company_facts, PREFERRED_DIV_TAGS, ("USD",), ANNUAL_FORMS)
+    )
 
     # 4. Assemble annual rows and apply split adjustments
     rows: list[dict[str, Any]] = []
@@ -485,6 +548,16 @@ def extract_annual_financials(
         ocf_val = ocf_rec.val if ocf_rec is not None else None
         fcf_val = (ocf_val - capex_val) if (ocf_val is not None and capex_val is not None) else None
         div_paid_val = abs(div_rec.val) if div_rec is not None else None
+        div_paid_val = _strip_preferred_dividend(
+            div_rec=div_rec,
+            div_paid_val=div_paid_val,
+            common_div_rec=common_div_eq_map.get(fy_end),
+            pref_div_rec=pref_div_map.get(fy_end),
+            dps_d_adj=dps_d_adj,
+            dps_p_adj=dps_p_adj,
+            sh_dil_adj=sh_dil_adj,
+            sh_out_adj=sh_out_adj,
+        )
         if (
             div_paid_val is None
             and fy_start is not None
