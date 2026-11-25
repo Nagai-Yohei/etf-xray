@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from src.adapters.invesco_legacy import fetch_invesco_legacy_filings
 from src.adapters.ishares_legacy import fetch_ishares_legacy_filings
 from src.adapters.nport import FilingHoldings, fetch_etf_nport_filings
 from src.adapters.schwab_legacy import fetch_schwab_legacy_filings
@@ -56,6 +57,8 @@ def fetch_etf_filings(client: EdgarClient, etf_cfg: dict[str, Any]) -> list[Fili
         filings.extend(fetch_ishares_legacy_filings(client, etf_cfg))
     elif legacy_name == "spdr_legacy":
         filings.extend(fetch_spdr_legacy_filings(client, etf_cfg))
+    elif legacy_name == "invesco_legacy":
+        filings.extend(fetch_invesco_legacy_filings(client, etf_cfg))
 
     nport_filings = fetch_etf_nport_filings(client, etf_cfg)
 

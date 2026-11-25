@@ -90,5 +90,19 @@
     "legacy_adapter": "vanguard_legacy",
     "legacy_fund_title": "Dividend Appreciation Index Fund",
     "active": true
+  },
+  {
+    "etf_id": "QQQ",
+    "name": "Invesco QQQ Trust, Series 1",
+    "issuer": "Invesco",
+    "cik": "0001067839",
+    "series_id": null,
+    "series_name_patterns": [
+      "INVESCO QQQ TRUST, SERIES 1"
+    ],
+    "structure": "uit",
+    "fiscal_year_end_month": 9,
+    "legacy_adapter": "invesco_legacy",
+    "active": true
   }
 ]

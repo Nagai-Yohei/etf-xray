@@ -35,12 +35,13 @@ Working rules for AI coding agents and maintainers. Read this file completely be
 - **N-PORT-P adapter (`src/adapters/nport.py`)**:
   - Extract common equity long positions only (`assetCat == "EC"` and `payoffProfile == "Long"`), excluding MMFs, futures, and securities-lending collateral.
   - Validate 9-character alphanumeric CUSIPs and 12-character alphanumeric ISINs (reject `"000000000"`, `"N/A"`).
-- **Legacy HTML adapters (`src/adapters/schwab_legacy.py`, `src/adapters/vanguard_legacy.py`, `src/adapters/ishares_legacy.py`, `src/adapters/spdr_legacy.py`)**:
+- **Legacy HTML adapters (`src/adapters/schwab_legacy.py`, `src/adapters/vanguard_legacy.py`, `src/adapters/ishares_legacy.py`, `src/adapters/spdr_legacy.py`, `src/adapters/invesco_legacy.py`)**:
   - Never disable the total-value reconciliation check against `Total Common Stock(s)`.
   - Known 2019 SEC N-Q → N-PORT transition filing gaps (no public filing exists): `SCHD 2019-05-31`, `VOO 2019-03-31`, `VYM 2019-07-31`, `VIG 2019-04-30`, `HDV 2019-07-31`.
   - Schwab legacy: parse full "Portfolio Holdings as of ..." tables only (skip Condensed top-50 schedules).
   - Vanguard legacy: exclude non-target funds (e.g., International High Dividend Yield Index Fund), handle multi-line wrapped names, inline kerning tags, merged cells, and certification-only `/A` amendment fallbacks.
   - SPDR UIT legacy (`DIA` `N-30D`): semi-annual Apr/Oct shareholder reports through `2019-04-30`, transitioning to quarterly `N-PORT-P` from `2019-10-31`.
+  - Invesco UIT legacy (`QQQ` `N-30B-2`): annual Sep shareholder reports through `2018-09-30` (supporting both 2011–2015 and 2016–2018 column layouts), transitioning to quarterly `N-PORT-P` from `2019-09-30`.
 - **Entity resolution (`src/identify.py`)**:
   - Priority: `manual_tickers.csv` (CUSIP) -> OpenFIGI (CUSIP/ISIN) -> legacy name bridge (unambiguous N-PORT names only) -> `manual_tickers.csv` (name) -> SEC `company_tickers.json`.
   - Raise an exception if duplicate `security_id`s appear within the same `(etf_id, as_of)`.

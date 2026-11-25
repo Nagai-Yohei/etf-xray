@@ -226,10 +226,10 @@ export async function renderCompareView(
       ["SCHD", "VYM"],
       ["SCHD", "VIG"],
       ["SCHD", "HDV"],
+      ["VOO", "QQQ"],
+      ["SCHD", "QQQ"],
       ["VYM", "VIG"],
-      ["VOO", "VIG"],
       ["VOO", "DIA"],
-      ["VYM", "HDV"],
     ].filter(([a, b]) => etfById.has(a) && etfById.has(b));
 
     headerSlot.appendChild(

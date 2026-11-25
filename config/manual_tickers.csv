@@ -436,3 +436,63 @@ Dun & Bradstreet Corp.,,DNB,Legacy Dun & Bradstreet (taken private 2019; re-IPOe
 First of Long Island Corp/The,320734106,FLIC,Merged with ConnectOne Bancorp in 2025
 Cambridge Bancorp,132152109,CATC,Merged with Eastern Bankshares in 2024
 Lakeland Bancorp Inc,511637100,LBAI,Merged with Provident Financial Services in 2024
+"Discovery Communications, Inc., Class C",,DISCK,QQQ legacy Series C disambiguation
+"Twenty-First Century Fox, Inc., Class B",,FOX,QQQ legacy Class B disambiguation
+"Liberty Media Corp., Class A",,FWONA,QQQ legacy Series A disambiguation
+"Liberty Media Corp., Class C",,FWONK,QQQ legacy Series C disambiguation
+"Liberty Global PLC, Class A",,LBTYA,QQQ legacy Class A disambiguation
+"Liberty Global PLC, Class C",,LBTYK,QQQ legacy Class C disambiguation
+"Liberty Global PLC, Series C",,LBTYK,QQQ legacy Series C disambiguation
+Liberty Global PLC,G5480U104,LBTYA,Liberty Global Class A (CUSIP override)
+Liberty Global PLC,G5480U120,LBTYK,Liberty Global Class C (CUSIP override)
+"Liberty Global PLC LiLAC, Class A",,LILA,QQQ legacy LiLAC Class A disambiguation
+"Liberty Global PLC LiLAC, Class C",,LILAK,QQQ legacy LiLAC Class C disambiguation
+"Liberty Interactive Corp., Class A",,QVCA,QQQ legacy Liberty Interactive Class A
+"Liberty Interactive Corp. QVC Group, Class A",,QVCA,QQQ legacy QVC Group Class A
+"Liberty Interactive Corp. QVC Group, Series A",,QVCA,QQQ legacy QVC Group Series A
+"Liberty Ventures, Series A",,LVNTA,QQQ legacy Liberty Ventures Series A
+Altera Corp.,,ALTR,Acquired by Intel in 2015
+"Apollo Group, Inc., Class A",,APOL,Taken private in 2017
+"BMC Software, Inc.",,BMC,Taken private in 2013
+"Baidu, Inc. ADR",,BIDU,QQQ legacy ADR (Baidu Inc)
+Ctrip.com International Ltd. ADR,,TCOM,Renamed to Trip.com Group Ltd (TCOM)
+"Ctrip.com International, Ltd.",22943F100,TCOM,Renamed to Trip.com Group Ltd (TCOM)
+"DENTSPLY International, Inc.",,XRAY,Merged with Sirona into DENTSPLY SIRONA (XRAY)
+"F5 Networks, Inc.",,FFIV,Renamed to F5 Inc (FFIV)
+"FLIR Systems, Inc.",,FLIR,Acquired by Teledyne in 2021
+Flextronics International Ltd.,,FLEX,Renamed to Flex Ltd (FLEX)
+"Green Mountain Coffee Roasters, Inc.",,GMCR,Renamed to Keurig Green Mountain and acquired in 2016
+"Keurig Green Mountain, Inc.",,GMCR,Acquired by JAB Holding in 2016
+Infosys Technologies Ltd. ADR,,INFY,Renamed to Infosys Ltd (INFY)
+"Joy Global, Inc.",,JOY,Acquired by Komatsu in 2017
+Life Technologies Corp.,,LIFE.OLD,Acquired by Thermo Fisher in 2014 (legacy LIFE; avoid Ethos collision)
+"Mylan, Inc.",,MYL,Reorganized as Mylan NV (MYL) before merging into Viatris
+"NII Holdings, Inc.",,NIHD,Delisted in 2014
+Research In Motion Ltd.,,BB,Renamed to BlackBerry Ltd (BB) in 2013
+Sears Holdings Corp.,,SHLD,Bankruptcy and delisted in 2018
+"Sirius XM Radio, Inc.",,SIRI,Reorganized into Sirius XM Holdings (SIRI)
+"Stericycle, Inc.",,SRCL,Acquired by Waste Management in 2024
+Teva Pharmaceutical Industries Ltd. ADR,,TEVA,QQQ legacy ADR (Teva Pharmaceutical)
+"Virgin Media, Inc.",,VMED,Acquired by Liberty Global in 2013
+Vodafone Group PLC ADR,,VOD,QQQ legacy ADR (Vodafone Group)
+"Warner Chilcott PLC, Class A",,WCRX,Acquired by Actavis in 2013
+"Nuance Communications, Inc.",,NUAN,Acquired by Microsoft in 2022
+Randgold Resources Ltd. ADR,,GOLD.OLD,Merged into Barrick Gold in 2019 (legacy GOLD; avoid Gold.com collision)
+"Viacom, Inc., Class B",,VIAB,Merged with CBS into ViacomCBS in 2019
+Catamaran Corp.,,CTRX,Acquired by UnitedHealth Group in 2015
+"Tesla Motors, Inc.",,TSLA,Renamed to Tesla Inc (TSLA) in 2017
+"Automatic Data Processing, Inc. when-issued",,ADP,When-issued shares on 2014-09-30 CDK Global spinoff date
+"DISH Network Corp., Class A",,DISH,Merged into EchoStar in 2023
+NXP Semiconductor NV,,NXPI,NXP Semiconductors NV (NXPI)
+VimpelCom Ltd. ADR,,VEON,Renamed to VEON Ltd (VEON) in 2017
+"JD.com, Inc. ADR",,JD,QQQ legacy ADR (JD.com Inc)
+"NetEase, Inc. ADR",,NTES,QQQ legacy ADR (NetEase Inc)
+"SBA Communications Corp.,Class A",,SBAC,Missing space after comma in 2016-09-30 QQQ filing (SBAC)
+"Ulta Salon Cosmetics & Fragrance, Inc.",,ULTA,Renamed to Ulta Beauty Inc (ULTA) in 2017
+"Hologic, Inc.",,HOLX,QQQ legacy Hologic Inc (HOLX)
+Shire PLC ADR,,SHPG,Acquired by Takeda Pharmaceutical in 2019
+"Qurate Retail, Inc.",,QRTEA,Renamed from Liberty Interactive QVC Group in 2018
+ASML Holding N.V.,N07059210,ASML,ASML Holding NV New York Registry Shares (CUSIP override)
+"Seattle Genetics, Inc.",812578102,SGEN,Renamed to Seagen Inc (SGEN) in 2020
+Seagen Inc.,81181C104,SGEN,Acquired by Pfizer in 2023
+Splunk Inc.,848637104,SPLK,Acquired by Cisco in 2024

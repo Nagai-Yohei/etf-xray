@@ -12,6 +12,7 @@ Live site: https://etf-xray.pages.dev
 - SCHD — Schwab U.S. Dividend Equity ETF (2011-11 – present)
 - HDV — iShares Core High Dividend ETF (2011-04 – present)
 - DIA — SPDR Dow Jones Industrial Average ETF Trust (2011-04 – present; semi-annual `N-30D` through 2019-04, quarterly `N-PORT-P` from 2019-10)
+- QQQ — Invesco QQQ Trust, Series 1 (2011-09 – present; annual `N-30B-2` through 2018-09, quarterly `N-PORT-P` from 2019-09)
 
 ## Quick Start
 
