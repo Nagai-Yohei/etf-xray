@@ -323,9 +323,9 @@ export async function renderScreenerView(
     },
     [
       el("option", { value: "", text: "Any count" }),
-      ...[2, 3, 4, 5]
-        .filter((n) => n <= etfIds.length)
-        .map((n) => el("option", { value: String(n), text: n === etfIds.length ? `All ${n} ETFs` : `${n}+ ETFs` })),
+      ...Array.from({ length: Math.max(0, etfIds.length - 1) }, (_, idx) => idx + 2).map((n) =>
+        el("option", { value: String(n), text: n === etfIds.length ? `All ${n} ETFs` : `${n}+ ETFs` })
+      ),
     ]
   );
 

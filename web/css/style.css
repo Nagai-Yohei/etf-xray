@@ -1059,7 +1059,7 @@ a:hover {
 
 .etf-card-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -1110,8 +1110,8 @@ a:hover {
 
 .etf-card-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--surface-alt);
@@ -1240,8 +1240,9 @@ a:hover {
 
 .home-etf-badges {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 4px;
+  max-width: 240px;
 }
 
 .home-method-grid {
@@ -1284,12 +1285,23 @@ a:hover {
   color: var(--text-subtle);
 }
 
+@media (max-width: 1120px) {
+  .etf-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 960px) {
-  .etf-card-grid,
   .home-highlights-grid {
     grid-template-columns: 1fr;
   }
   .home-method-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .etf-card-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1594,6 +1606,16 @@ a:hover {
 .compare-matrix-table th:first-child,
 .compare-matrix-table td:first-child {
   text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--border);
+}
+
+.compare-matrix-table th:first-child {
+  z-index: 4;
+  background: var(--surface-alt);
 }
 
 .matrix-cell {
@@ -1832,7 +1854,8 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  max-width: 240px;
 }
 
 .screener-pagination {

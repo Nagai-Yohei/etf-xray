@@ -1646,7 +1646,20 @@ export async function renderStockView(
       }
       const allDates = [...allDatesSet].sort();
       const priceMap = new Map((detail.prices || []).map((p) => [p.as_of, p.price_usd]));
-      const etfColors = [PALETTE.blue, PALETTE.amber, PALETTE.violet, PALETTE.rose, PALETTE.indigo];
+      const etfColors = [
+        PALETTE.blue,
+        PALETTE.amber,
+        PALETTE.violet,
+        PALETTE.rose,
+        PALETTE.indigo,
+        "#0891b2",
+        "#ea580c",
+        "#c026d3",
+        "#0284c7",
+        "#ca8a04",
+        "#be123c",
+        "#475569",
+      ];
 
       if (showCharts && allDates.length > 0) {
         const c1 = el("canvas", { ariaLabel: "Multi-ETF weight and implied price chart" });
@@ -1654,11 +1667,18 @@ export async function renderStockView(
 
         const allDatesMs = allDates.map((d) => Date.parse(d));
         const MAX_BRIDGE_MS = 200 * 86400000;
-        const gapBreaker = (baseColor) => ({
+        // Pre-NPORT QQQ filings (N-30B-2 through 2018-09) were annual, so allow 1-year bridges there
+        const ANNUAL_LEGACY_BRIDGE_MS = 385 * 86400000;
+        const ANNUAL_LEGACY_CUTOFF_MS = Date.parse("2019-09-30");
+        const gapBreaker = (baseColor, eid = null) => ({
           borderColor: (ctx) => {
             const t0 = allDatesMs[ctx.p0DataIndex];
             const t1 = allDatesMs[ctx.p1DataIndex];
-            if (Number.isFinite(t0) && Number.isFinite(t1) && t1 - t0 > MAX_BRIDGE_MS) {
+            const limit =
+              eid === "QQQ" && Number.isFinite(t0) && t0 < ANNUAL_LEGACY_CUTOFF_MS
+                ? ANNUAL_LEGACY_BRIDGE_MS
+                : MAX_BRIDGE_MS;
+            if (Number.isFinite(t0) && Number.isFinite(t1) && t1 - t0 > limit) {
               return "transparent";
             }
             return baseColor;
@@ -1675,7 +1695,7 @@ export async function renderStockView(
             borderWidth: 2,
             pointRadius: etfIds.length > 1 ? 1.5 : 2.2,
             spanGaps: true,
-            segment: gapBreaker(color),
+            segment: gapBreaker(color, eid),
             tension: 0.15,
             yAxisID: "y",
           };

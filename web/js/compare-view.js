@@ -105,7 +105,7 @@ export async function renderCompareView(
     sortKey: "overlap",
     sortDir: -1,
     tableExpanded: false,
-    coreMinEtfs: Math.min(etfIds.length, 4),
+    coreMinEtfs: Math.min(etfIds.length, Math.max(3, etfIds.length - 2)),
     coreExpanded: false,
   };
 
@@ -736,8 +736,14 @@ export async function renderCompareView(
 
   function renderCoreHoldings() {
     clearNode(coreCard);
-    const thresholds = [etfIds.length, Math.max(2, etfIds.length - 1), Math.max(2, etfIds.length - 2)]
-      .filter((v, idx, arr) => arr.indexOf(v) === idx)
+    const thresholds = [
+      etfIds.length,
+      etfIds.length - 1,
+      etfIds.length - 2,
+      4,
+      3,
+    ]
+      .filter((v, idx, arr) => v >= 2 && v <= etfIds.length && arr.indexOf(v) === idx)
       .sort((a, b) => b - a);
 
     const coreList = computeCoreHoldings(etfIds, holdingsByEtf, stocksIndex, state.coreMinEtfs);
