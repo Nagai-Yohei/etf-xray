@@ -444,11 +444,22 @@ function renderHighlightsSection(stocksList, navigate) {
   }
 
   return el("section", { className: "home-section" }, [
-    el("div", { className: "home-section-head" }, [
-      el("h2", { className: "home-section-title", text: "Notable Securities" }),
-      el("span", {
-        className: "home-section-sub",
-        text: "Click any stock to open full 10-K/10-Q charts, balance sheet trends, and ETF ownership history.",
+    el("div", { className: "home-section-head home-section-head-row" }, [
+      el("div", {}, [
+        el("h2", { className: "home-section-title", text: "Notable Securities" }),
+        el("span", {
+          className: "home-section-sub",
+          text: "Click any stock to open full 10-K/10-Q charts, balance sheet trends, and ETF ownership history.",
+        }),
+      ]),
+      el("a", {
+        href: "#/screener",
+        className: "btn btn-sm home-compare-cta",
+        text: "Open Stock Screener →",
+        onClick: (e) => {
+          e.preventDefault();
+          navigate("#/screener");
+        },
       }),
     ]),
     el("div", { className: "home-highlights-grid" }, [buildMultiTable(), buildDivTable()]),

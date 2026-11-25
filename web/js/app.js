@@ -4,6 +4,7 @@
  *   #/                  (Home overview)
  *   #/etf/<ETF_ID>      (ETF holdings & history view)
  *   #/compare           (ETF overlap & comparison view)
+ *   #/screener          (Cross-ETF stock screener)
  *   #/stock/<SECURITY_ID> (Individual stock fundamentals view)
  */
 
@@ -12,11 +13,13 @@ import { renderCompareView } from "./compare-view.js";
 import { clearNode, el, fmtPct } from "./dom.js";
 import { renderEtfView } from "./etf-view.js";
 import { renderHomeView } from "./home-view.js";
+import { renderScreenerView } from "./screener-view.js";
 import { renderStockView } from "./stock-view.js";
 
 const rootEl = document.getElementById("app-root");
 const etfSwitcher = document.getElementById("etf-switcher");
 const navCompareLink = document.getElementById("nav-compare-link");
+const navScreenerLink = document.getElementById("nav-screener-link");
 const searchInput = document.getElementById("global-search-input");
 const searchDropdown = document.getElementById("global-search-results");
 const topbarContext = document.getElementById("topbar-context");
@@ -240,6 +243,9 @@ async function handleRoute() {
   if (navCompareLink) {
     navCompareLink.classList.toggle("active", parts[0] === "compare");
   }
+  if (navScreenerLink) {
+    navScreenerLink.classList.toggle("active", parts[0] === "screener");
+  }
 
   try {
     let nextCleanup = null;
@@ -275,6 +281,29 @@ async function handleRoute() {
           };
         },
         isStale
+      );
+      if (isStale()) {
+        if (typeof nextCleanup === "function") nextCleanup();
+        return;
+      }
+      cleanupView = nextCleanup;
+      window.scrollTo({ top: 0 });
+    } else if (parts[0] === "screener") {
+      etfSwitcher.value = "";
+      setTopbarContext(null);
+      nextCleanup = await renderScreenerView(
+        rootEl,
+        metaData,
+        stocksList,
+        params,
+        navigate,
+        (hash) => {
+          if (isStale()) return;
+          lastBackTarget = {
+            href: hash || "#/screener",
+            label: "← Back to Screener",
+          };
+        }
       );
       if (isStale()) {
         if (typeof nextCleanup === "function") nextCleanup();
