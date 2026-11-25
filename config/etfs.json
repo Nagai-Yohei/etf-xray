@@ -104,5 +104,21 @@
     "fiscal_year_end_month": 9,
     "legacy_adapter": "invesco_legacy",
     "active": true
+  },
+  {
+    "etf_id": "SPYD",
+    "name": "SPDR Portfolio S&P 500 High Dividend ETF",
+    "issuer": "State Street (SPDR)",
+    "cik": "0001064642",
+    "series_id": "S000050968",
+    "series_name_patterns": [
+      "S000050968"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 6,
+    "legacy_adapter": "spdr_series_legacy",
+    "legacy_fund_title": "S&P 500 High Dividend ETF",
+    "legacy_min_date": "2015-10-01",
+    "active": true
   }
 ]

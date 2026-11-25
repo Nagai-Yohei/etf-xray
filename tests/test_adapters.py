@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from src.adapters.invesco_legacy import parse_invesco_n30b2_html
-from src.adapters.spdr_legacy import parse_spdr_n30d_html
+from src.adapters.spdr_legacy import parse_spdr_n30d_html, parse_spdr_series_html
 from src.adapters.vanguard_legacy import parse_vanguard_legacy_html
 
 
@@ -55,6 +55,38 @@ class TestSpdrLegacyAdapter(unittest.TestCase):
                 accession="0001193125-19-175597",
                 filed="2019-06-18",
             )
+
+    def test_parses_spdr_series_multifund_wrapped_and_reit_names(self) -> None:
+        html = b"""
+        <html><body>
+        <p>Other SPDR Fund</p>
+        <p>SPDR S&amp;P 500 High Dividend ETF</p>
+        <p>SCHEDULE OF INVESTMENTS March 31, 2018 (Unaudited)</p>
+        <table>
+          <tr><th>Security Description</th><th>Shares</th><th>Value</th></tr>
+          <tr><td>COMMON STOCKS &mdash; 99.5%</td></tr>
+          <tr><td>REAL ESTATE INVESTMENT TRUSTS (REITS) &mdash; 25.0%</td></tr>
+          <tr><td>Apartment Investment &amp; Management</td></tr>
+          <tr><td>Co. Class A REIT</td><td>100</td><td>$</td><td>50,000</td></tr>
+          <tr><td>Realty Income Corp. REIT</td><td>200</td><td></td><td>150,000</td></tr>
+          <tr><td>200,000</td></tr>
+          <tr><td>TOTAL COMMON STOCKS (Cost $180,000)</td><td></td><td>200,000</td></tr>
+        </table>
+        </body></html>
+        """
+        filing = parse_spdr_series_html(
+            html_bytes=html,
+            etf_id="SPYD",
+            fund_title="S&P 500 High Dividend ETF",
+            as_of="2018-03-31",
+            form="N-Q",
+            accession="0001193125-18-176239",
+            filed="2018-05-29",
+        )
+        self.assertEqual(len(filing.holdings), 2)
+        self.assertEqual(filing.holdings[0].reported_name, "Realty Income Corp.")
+        self.assertEqual(filing.holdings[1].reported_name, "Apartment Investment & Management Co. Class A")
+        self.assertEqual(filing.total_value_usd, 200_000.0)
 
 
 class TestVanguardLegacyAdapter(unittest.TestCase):

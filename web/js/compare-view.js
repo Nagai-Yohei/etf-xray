@@ -224,12 +224,13 @@ export async function renderCompareView(
 
     const quickPairs = [
       ["SCHD", "VYM"],
-      ["SCHD", "VIG"],
+      ["SCHD", "SPYD"],
       ["SCHD", "HDV"],
+      ["SCHD", "VIG"],
+      ["HDV", "SPYD"],
       ["VOO", "QQQ"],
       ["SCHD", "QQQ"],
       ["VYM", "VIG"],
-      ["VOO", "DIA"],
     ].filter(([a, b]) => etfById.has(a) && etfById.has(b));
 
     headerSlot.appendChild(
