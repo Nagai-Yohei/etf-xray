@@ -8,6 +8,7 @@ Live site: https://etf-xray.pages.dev
 
 - VYM — Vanguard High Dividend Yield ETF (2011-01 – present)
 - VIG — Vanguard Dividend Appreciation ETF (2011-01 – present)
+- DGRO — iShares Core Dividend Growth ETF (2014-07 – present)
 - VOO — Vanguard S&P 500 ETF (2011-03 – present)
 - SCHD — Schwab U.S. Dividend Equity ETF (2011-11 – present)
 - HDV — iShares Core High Dividend ETF (2011-04 – present)
@@ -54,6 +55,6 @@ Set `CLOUDFLARE_API_TOKEN` (scoped to Cloudflare Pages: Edit), `CLOUDFLARE_ACCOU
 
 ## Notes & License
 
-Data is compiled from SEC EDGAR (`N-PORT-P`, `N-CSR`, `N-CSRS`, `N-Q`, `N-30D`, `10-K`/`10-Q` XBRL CompanyFacts) and OpenFIGI. Quarter-end share prices are implied from reported ETF holdings (`value_usd / shares`). Known SEC N-Q to N-PORT transition filing gaps (no public filing exists for those period ends): `SCHD 2019-05-31`, `VOO 2019-03-31`, `VYM 2019-07-31`, `VIG 2019-04-30`, `HDV 2019-07-31`, and `SPYD 2019-03-31`. For informational purposes only; not investment advice.
+Data is compiled from SEC EDGAR (`N-PORT-P`, `N-CSR`, `N-CSRS`, `N-Q`, `N-30D`, `10-K`/`10-Q` XBRL CompanyFacts) and OpenFIGI. Quarter-end share prices are implied from reported ETF holdings (`value_usd / shares`). Known SEC N-Q to N-PORT transition filing gaps (no public filing exists for those period ends): `SCHD 2019-05-31`, `VOO 2019-03-31`, `VYM 2019-07-31`, `VIG 2019-04-30`, `HDV 2019-07-31`, `DGRO 2019-07-31`, and `SPYD 2019-03-31`. For informational purposes only; not investment advice.
 
 Licensed under the [MIT License](LICENSE).

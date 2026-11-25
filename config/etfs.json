@@ -120,5 +120,22 @@
     "legacy_fund_title": "S&P 500 High Dividend ETF",
     "legacy_min_date": "2015-10-01",
     "active": true
+  },
+  {
+    "etf_id": "DGRO",
+    "name": "iShares Core Dividend Growth ETF",
+    "issuer": "BlackRock (iShares)",
+    "cik": "0001100663",
+    "series_id": "S000045648",
+    "series_name_patterns": [
+      "S000045648"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 4,
+    "legacy_adapter": "ishares_legacy",
+    "legacy_name_patterns": [
+      "iShares Core Dividend Growth ETF"
+    ],
+    "active": true
   }
 ]

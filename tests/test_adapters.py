@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from src.adapters.invesco_legacy import parse_invesco_n30b2_html
+from src.adapters.ishares_legacy import parse_ishares_legacy_html
 from src.adapters.spdr_legacy import parse_spdr_n30d_html, parse_spdr_series_html
 from src.adapters.vanguard_legacy import parse_vanguard_legacy_html
 
@@ -211,6 +212,34 @@ class TestInvescoLegacyAdapter(unittest.TestCase):
                 accession="0001104659-12-003105",
                 filed="2012-01-20",
             )
+
+
+class TestIsharesLegacyAdapter(unittest.TestCase):
+    def test_parses_kerning_split_schedule_heading(self) -> None:
+        html = b"""
+        <html><body>
+        <div><span>Schedu</span><span>le</span> of Investments (unaudited) October 31, 2018</div>
+        <div>iShares&reg; Core Dividend Growth ETF</div>
+        <table>
+          <tr><th>Security</th><th>Shares</th><th>Value</th></tr>
+          <tr><td>Common Stocks &mdash; 99.8%</td></tr>
+          <tr><td>Microsoft Corp.</td><td>1,000</td><td>$ 100,000</td></tr>
+          <tr><td>Apple Inc.</td><td>2,000</td><td>400,000</td></tr>
+          <tr><td>TOTAL COMMON STOCKS (Cost: $450,000)</td><td></td><td>500,000</td></tr>
+        </table>
+        </body></html>
+        """
+        filing = parse_ishares_legacy_html(
+            html_bytes=html,
+            etf_id="DGRO",
+            name_patterns=["iShares Core Dividend Growth ETF"],
+            as_of="2018-10-31",
+            form="N-CSRS",
+            accession="0001193125-19-003301",
+            filed="2019-01-04",
+        )
+        self.assertEqual(len(filing.holdings), 2)
+        self.assertEqual(filing.total_value_usd, 500_000.0)
 
 
 if __name__ == "__main__":

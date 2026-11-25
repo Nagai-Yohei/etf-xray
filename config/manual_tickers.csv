@@ -498,3 +498,82 @@ Seagen Inc.,81181C104,SGEN,Acquired by Pfizer in 2023
 Splunk Inc.,848637104,SPLK,Acquired by Cisco in 2024
 "Plum Creek Timber Co., Inc.",,PCL,Merged with Weyerhaeuser in 2016
 "GGP, Inc.",,GGP,Acquired by Brookfield Property Partners in 2018
+Chubb Corp. (The),,CB.OLD,Acquired by ACE Ltd and delisted in 2016 (iShares legacy spelling)
+Brown-Forman Corp. Class A,,BF.A,Dual-class disambiguation (Class A)
+Brown-Forman Corp. Class B,,BF.B,Dual-class disambiguation (Class B)
+Brown-Forman Corp,115637100,BF.A,Brown-Forman Class A (CUSIP override)
+Brown-Forman Corp,115637209,BF.B,Brown-Forman Class B (CUSIP override)
+Viacom Inc. Class A,,VIA,Dual-class disambiguation (Viacom Class A)
+HEICO Corp,422806109,HEI,HEICO Common Stock (CUSIP override)
+HEICO Corp,422806208,HEI.A,HEICO Class A (CUSIP override)
+HEICO Corp.,,HEI,Dual-class disambiguation (HEICO Common)
+HEICO Corp. Class A,,HEI.A,Dual-class disambiguation (HEICO Class A)
+Rush Enterprises Inc,781846209,RUSHA,Rush Enterprises Class A (CUSIP override)
+Rush Enterprises Inc,781846308,RUSHB,Rush Enterprises Class B (CUSIP override)
+Allied World Assurance Co. Holdings Ltd.,,AWH,Acquired by Fairfax Financial in 2017
+Allied World Assurance Co. Holdings AG,,AWH,Acquired by Fairfax Financial in 2017
+DeVry Education Group Inc.,,ATGE,Renamed to Adtalem Global Education (ATGE) in 2017
+Adtalem Global Education Inc.,,ATGE,Adtalem Global Education (legacy ATGE)
+Diebold Inc.,,DBD,Renamed to Diebold Nixdorf Inc (DBD) in 2016
+Evercore Partners Inc. Class A,,EVR,Renamed to Evercore Inc (EVR) in 2017
+Finish Line Inc. (The) Class A,,FINL,Acquired by JD Sports in 2018
+Hillshire Brands Co. (The),,HSH,Acquired by Tyson Foods in 2014
+ITC Holdings Corp.,,ITC,Acquired by Fortis in 2016
+Men's Wearhouse Inc. (The),,MW,Reorganized as Tailored Brands (MW/TLRD)
+Omnicare Inc.,,OCR,Acquired by CVS Health in 2015
+PetSmart Inc.,,PETM,Taken private in 2015
+Rock-Tenn Co. Class A,,RKT.OLD,Merged into WestRock in 2015 (legacy RKT; avoid Rocket Companies collision)
+Solera Holdings Inc.,,SLH,Taken private in 2016
+TECHNE Corp.,,TECH,Renamed to Bio-Techne Corp (TECH) in 2014
+CDK Global Inc.,,CDK,Taken private by Brookfield in 2022
+CBOE Holdings Inc.,,CBOE,Renamed to Cboe Global Markets (CBOE) in 2017
+"Celanese Corp., Series A",,CE,Celanese Corp (CE)
+Chico's FAS Inc.,,CHS,Taken private by Sycamore Partners in 2024
+Cimarex Energy Co.,,XEC,Merged with Cabot Oil & Gas into Coterra Energy
+Corporate Executive Board Co. (The),,CEB,Renamed to CEB Inc and acquired by Gartner in 2017
+"Estee Lauder Companies Inc. (The), Class A",,EL,Estee Lauder Companies Inc (EL)
+Globe Specialty Metals Inc.,,GSM,Merged into Ferroglobe PLC (GSM) in 2015
+"Marriott International Inc./MD, Class A",,MAR,Marriott International Inc (MAR)
+Montpelier Re Holdings Ltd.,,MRH,Acquired by Endurance Specialty in 2015
+Protective Life Corp.,,PL.OLD,Acquired by Dai-ichi Life in 2015 (legacy PL; avoid Planet Labs collision)
+Rent-A-Center Inc./TX,,UPBD,Renamed to Upbound Group Inc (UPBD) in 2023
+Scotts Miracle-Gro Co. (The) Class A,,SMG,Scotts Miracle-Gro Co (SMG)
+Symetra Financial Corp.,,SYA,Acquired by Sumitomo Life in 2016
+Baxalta Inc.,,BXLT,Acquired by Shire in 2016
+Chemical Financial Corp.,,CHFC,Merged with TCF Financial in 2019
+DSW Inc. Class A,,DBI,Renamed to Designer Brands Inc (DBI) in 2019
+Endurance Specialty Holdings Ltd.,,ENH,Acquired by Sompo Holdings in 2017
+HSN Inc.,,HSNI,Acquired by Liberty Interactive in 2017
+Harman International Industries Inc.,,HAR,Acquired by Samsung Electronics in 2017
+Heartland Payment Systems Inc.,,HPY,Acquired by Global Payments in 2016
+IAC/InterActiveCorp,,IAC,IAC Inc legacy ticker
+Independent Bank Corp./Rockland MA,,INDB,Independent Bank Corp (INDB)
+Independent Bank Corp./ Rockland MA,,INDB,Spacing variant in 2017-04-30 DGRO filing (INDB)
+LegacyTexas Financial Group Inc.,,LTXB,Acquired by Prosperity Bancshares in 2019
+LegacyTexas Financial Group Inc,52471Y106,LTXB,Acquired by Prosperity Bancshares in 2019
+Newell Rubbermaid Inc.,,NWL,Renamed to Newell Brands Inc (NWL) in 2016
+PolyOne Corp.,,AVNT,Renamed to Avient Corp (AVNT) in 2020
+PolyOne Corp,73179P106,AVNT,Renamed to Avient Corp (AVNT) in 2020
+ProAssurance Corp.,,PRA,ProAssurance Corp (PRA)
+Schlumberger Ltd.,,SLB,Renamed to SLB (SLB) in 2022
+Scripps Networks Interactive Inc. Class A,,SNI,Acquired by Discovery in 2018
+Service Corp. International/U.S.,,SCI,Service Corp International (SCI)
+Starwood Hotels & Resorts Worldwide Inc.,,HOT,Acquired by Marriott International in 2016
+Coca-Cola European Partners PLC,,CCEP,Renamed to Coca-Cola Europacific Partners (CCEP)
+Convergys Corp.,,CVG,Acquired by SYNNEX in 2018
+EverBank Financial Corp.,,EVER.OLD,Acquired by TIAA in 2017 (legacy EVER; avoid EverQuote collision)
+Kansas City Southern,,KSU,Acquired by Canadian Pacific in 2021
+MB Financial Inc.,,MBFI,Acquired by Fifth Third Bancorp in 2019
+Neenah Paper Inc.,,NP,Renamed to Neenah Inc (NP) before merging into Mativ
+Argo Group International Holdings Ltd.,,ARGO,Acquired by Brookfield Reinsurance in 2023
+Argo Group International Holdi,,ARGO,Truncated name in 2019-10-31 DGRO NPORT-P (Argo Group)
+Pinnacle Foods Inc.,,PF,Acquired by Conagra Brands in 2018
+Zions BanCorp.,,ZION,Zions Bancorporation NA (ZION)
+Veoneer Inc.,,VNE,Acquired by SSW Partners / Qualcomm in 2022
+"International Flavors & Fragrances Inc., New",,IFF,Post-Frutarom merger listing (IFF)
+Altra Industrial Motion Corp.,,AIMC,Acquired by Regal Rexnord in 2023
+Altra Industrial Motion Corp,02208R106,AIMC,Acquired by Regal Rexnord in 2023
+CenterState Bank Corp,15201P109,CSFL,Merged with SouthState Corp in 2020
+W R Grace & Co,38388F108,GRA,Taken private by Standard Industries in 2021
+Enhabit Inc,29332G102,EHAB,Spun off from Encompass Health in 2022
+Ferguson PLC,,FERG,Redomiciled as Ferguson Enterprises Inc (FERG) in 2024

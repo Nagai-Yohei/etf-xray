@@ -29,7 +29,15 @@ _FOOTNOTE_SUFFIX_RE = re.compile(
     r"(?:\s*(?:\([a-z0-9,\s]{1,5}\)|[*†‡§^])|\s+[a-z](?:,[a-z])*|,?\s+NVS)+$"
 )
 _THE_PAREN_RE = re.compile(r"\s*\(\s*The\s*\)\s*$", re.IGNORECASE)
+_BLOCK_TAG_RE = re.compile(r"</?(?:p|div|tr|td|th|br|h[1-6]|li|table)\b[^>]*>|&nbsp;|&#160;", re.IGNORECASE)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _html_to_plain(raw: str) -> str:
+    """Normalize block boundaries to spaces while joining inline kerning tags seamlessly."""
+    s = _BLOCK_TAG_RE.sub(" ", raw)
+    s = _ANY_TAG_RE.sub("", s)
+    return _clean_text(s)
 
 
 def _clean_text(text: str) -> str:
@@ -99,10 +107,10 @@ def _find_schedule_start(html_text: str, name_patterns: list[str]) -> int:
     candidates: list[tuple[int, int]] = []
 
     for m in pattern.finditer(html_text):
-        pre_raw = html_text[max(0, m.start() - 1200) : m.start()]
-        pre_plain = _clean_text(_ANY_TAG_RE.sub(" ", pre_raw)).lower()
+        pre_raw = html_text[max(0, m.start() - 1600) : m.start()]
+        pre_plain = _html_to_plain(pre_raw).lower()
         tail_raw = html_text[m.end() : m.end() + 4000]
-        tail_plain = _clean_text(_ANY_TAG_RE.sub(" ", tail_raw)).lower()
+        tail_plain = _html_to_plain(tail_raw).lower()
 
         # Heading format: "Schedule of Investments ... iSHARES ® <Fund Name>"
         pre_window = pre_plain[-300:]
@@ -137,8 +145,17 @@ def parse_ishares_legacy_html(
     html_text = html_bytes.decode("utf-8", errors="replace")
     start_pos = _find_schedule_start(html_text, name_patterns)
 
-    # A single iShares dividend ETF schedule (~75 holdings) fits well within 450KB
-    chunk = html_text[start_pos : start_pos + 450_000]
+    # Locate the first "Total Common Stocks" after start_pos (up to 3.5MB for 400+ holding funds like DGRO)
+    search_win = html_text[start_pos : start_pos + 3_500_000]
+    total_pat = re.compile(
+        r"total(?:<[^>]+>|&nbsp;|&#160;|\s)+common(?:<[^>]+>|&nbsp;|&#160;|\s)+stocks?",
+        re.IGNORECASE,
+    )
+    m_end = total_pat.search(search_win)
+    if m_end:
+        chunk = html_text[start_pos : min(len(html_text), start_pos + m_end.end() + 8000)]
+    else:
+        chunk = html_text[start_pos : start_pos + 450_000]
     doc = lhtml.fromstring(chunk)
 
     in_common_stocks = False
