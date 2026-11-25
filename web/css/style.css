@@ -1555,9 +1555,23 @@ a:hover {
 }
 
 .table-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
   padding: 8px 16px;
   font-size: 12px;
   border-bottom: 1px solid var(--border);
+}
+
+.compare-table-scroll {
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.compare-table-scroll.expanded {
+  max-height: none;
 }
 
 .pos-val {

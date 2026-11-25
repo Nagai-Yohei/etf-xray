@@ -104,7 +104,9 @@ export async function renderCompareView(
     search: "",
     sortKey: "overlap",
     sortDir: -1,
+    tableExpanded: false,
     coreMinEtfs: Math.min(etfIds.length, 4),
+    coreExpanded: false,
   };
 
   let topOverlapChart = null;
@@ -125,6 +127,7 @@ export async function renderCompareView(
     if (!etfById.has(newA) || !etfById.has(newB) || newA === newB) return;
     state.etfA = newA;
     state.etfB = newB;
+    state.tableExpanded = false;
     if (state.activeTab === "common") {
       state.sortKey = "overlap";
       state.sortDir = -1;
@@ -516,6 +519,7 @@ export async function renderCompareView(
                 state.activeTab = t.id;
                 state.sortKey = t.defaultSort;
                 state.sortDir = -1;
+                state.tableExpanded = false;
                 renderHoldingsTable(ov);
               },
             })
@@ -525,9 +529,22 @@ export async function renderCompareView(
       ])
     );
 
-    const tableWrap = el("div", { className: "table-scroll" });
-    const countNote = el("div", { className: "table-meta-row text-muted" });
-    tableCard.appendChild(countNote);
+    const tableWrap = el("div", {
+      className: `table-scroll compare-table-scroll${state.tableExpanded ? " expanded" : ""}`,
+    });
+    const countNoteText = el("span", { className: "text-muted" });
+    const expandBtn = el("button", {
+      type: "button",
+      className: "btn btn-sm",
+      text: state.tableExpanded ? "Compact View" : "Expand All",
+      onClick: () => {
+        state.tableExpanded = !state.tableExpanded;
+        tableWrap.classList.toggle("expanded", state.tableExpanded);
+        expandBtn.textContent = state.tableExpanded ? "Compact View" : "Expand All";
+      },
+    });
+    const metaRow = el("div", { className: "table-meta-row" }, [countNoteText, expandBtn]);
+    tableCard.appendChild(metaRow);
     tableCard.appendChild(tableWrap);
 
     const columns =
@@ -578,7 +595,10 @@ export async function renderCompareView(
         compareNullable(sortCol.get(a), sortCol.get(b), state.sortDir)
       );
 
-      countNote.textContent = `Showing ${fmtInt(sorted.length)} of ${fmtInt(sourceRows.length)} securities — click any row to open fundamentals`;
+      countNoteText.textContent = `Showing ${fmtInt(sorted.length)} of ${fmtInt(sourceRows.length)} securities — click any row to open fundamentals`;
+      expandBtn.style.display = sorted.length > 8 ? "" : "none";
+      expandBtn.textContent = state.tableExpanded ? "Compact View" : "Expand All";
+      tableWrap.classList.toggle("expanded", state.tableExpanded);
 
       if (sorted.length === 0) {
         tableWrap.appendChild(el("div", { className: "empty-note", text: "No matching securities." }));
@@ -739,6 +759,7 @@ export async function renderCompareView(
               text: th === etfIds.length ? `All ${th} ETFs` : `${th}+ ETFs`,
               onClick: () => {
                 state.coreMinEtfs = th;
+                state.coreExpanded = false;
                 renderCoreHoldings();
               },
             })
@@ -750,6 +771,32 @@ export async function renderCompareView(
     if (coreList.length === 0) {
       coreCard.appendChild(el("div", { className: "empty-note", text: "No securities match this threshold." }));
       return;
+    }
+
+    const coreWrap = el("div", {
+      className: `table-scroll compare-table-scroll${state.coreExpanded ? " expanded" : ""}`,
+    });
+
+    if (coreList.length > 8) {
+      const coreExpandBtn = el("button", {
+        type: "button",
+        className: "btn btn-sm",
+        text: state.coreExpanded ? "Compact View" : "Expand All",
+        onClick: () => {
+          state.coreExpanded = !state.coreExpanded;
+          coreWrap.classList.toggle("expanded", state.coreExpanded);
+          coreExpandBtn.textContent = state.coreExpanded ? "Compact View" : "Expand All";
+        },
+      });
+      coreCard.appendChild(
+        el("div", { className: "table-meta-row" }, [
+          el("span", {
+            className: "text-muted",
+            text: `Showing ${fmtInt(coreList.length)} securities — scroll inside table or click any row to open fundamentals`,
+          }),
+          coreExpandBtn,
+        ])
+      );
     }
 
     const thead = el("thead", {}, [
@@ -794,9 +841,8 @@ export async function renderCompareView(
       )
     );
 
-    coreCard.appendChild(
-      el("div", { className: "table-scroll" }, [el("table", { className: "data-table" }, [thead, tbody])])
-    );
+    coreWrap.appendChild(el("table", { className: "data-table" }, [thead, tbody]));
+    coreCard.appendChild(coreWrap);
   }
 
   function renderAll() {
