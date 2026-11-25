@@ -1,10 +1,11 @@
-"""Unit tests for SEC filing adapters (SPDR UIT N-30D legacy parser)."""
+"""Unit tests for SEC filing adapters (SPDR UIT N-30D and Vanguard legacy HTML parsers)."""
 
 from __future__ import annotations
 
 import unittest
 
 from src.adapters.spdr_legacy import parse_spdr_n30d_html
+from src.adapters.vanguard_legacy import parse_vanguard_legacy_html
 
 
 class TestSpdrLegacyAdapter(unittest.TestCase):
@@ -52,6 +53,60 @@ class TestSpdrLegacyAdapter(unittest.TestCase):
                 as_of="2019-04-30",
                 accession="0001193125-19-175597",
                 filed="2019-06-18",
+            )
+
+
+class TestVanguardLegacyAdapter(unittest.TestCase):
+    def test_parses_100pct_equity_schedule_ending_with_total_investments(self) -> None:
+        html = b"""
+        <html><body>
+        <p>Dividend Appreciation Index Fund</p>
+        <p>Statement of Net Assets As of July 31, 2011</p>
+        <table>
+          <tr><th>Security</th><th>Shares</th><th>Market Value ($000)</th></tr>
+          <tr><td>Common Stocks (100.0%)</td><td></td><td></td></tr>
+          <tr><td>Coca-Cola Co.</td><td>5,000,000</td><td>350,000</td></tr>
+          <tr><td>PepsiCo Inc.</td><td>4,000,000</td><td>250,000</td></tr>
+          <tr><td>Total Investments (100.0%) (Cost $500,000)</td><td></td><td>600,000</td></tr>
+        </table>
+        </body></html>
+        """
+        filing = parse_vanguard_legacy_html(
+            html_bytes=html,
+            etf_id="VIG",
+            fund_title="Dividend Appreciation Index Fund",
+            as_of="2011-07-31",
+            form="N-CSRS",
+            accession="0000932471-11-003729",
+            filed="2011-09-29",
+        )
+        self.assertEqual(len(filing.holdings), 2)
+        self.assertEqual(filing.total_value_usd, 600_000_000.0)
+
+    def test_rejects_total_investments_after_temporary_cash_section(self) -> None:
+        html = b"""
+        <html><body>
+        <p>Dividend Appreciation Index Fund</p>
+        <p>Statement of Net Assets As of July 31, 2011</p>
+        <table>
+          <tr><th>Security</th><th>Shares</th><th>Market Value ($000)</th></tr>
+          <tr><td>Common Stocks (99.0%)</td><td></td><td></td></tr>
+          <tr><td>Coca-Cola Co.</td><td>5,000,000</td><td>350,000</td></tr>
+          <tr><td>Temporary Cash Investment (1.0%)</td><td></td><td></td></tr>
+          <tr><td>Vanguard Market Liquidity Fund</td><td>3,500</td><td>3,500</td></tr>
+          <tr><td>Total Investments (100.0%)</td><td></td><td>353,500</td></tr>
+        </table>
+        </body></html>
+        """
+        with self.assertRaises(ValueError):
+            parse_vanguard_legacy_html(
+                html_bytes=html,
+                etf_id="VIG",
+                fund_title="Dividend Appreciation Index Fund",
+                as_of="2011-07-31",
+                form="N-CSRS",
+                accession="0000932471-11-003729",
+                filed="2011-09-29",
             )
 
 

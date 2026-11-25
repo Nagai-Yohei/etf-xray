@@ -224,9 +224,11 @@ export async function renderCompareView(
 
     const quickPairs = [
       ["SCHD", "VYM"],
+      ["SCHD", "VIG"],
       ["SCHD", "HDV"],
+      ["VYM", "VIG"],
+      ["VOO", "VIG"],
       ["VOO", "DIA"],
-      ["VOO", "VYM"],
       ["VYM", "HDV"],
     ].filter(([a, b]) => etfById.has(a) && etfById.has(b));
 

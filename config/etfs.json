@@ -75,5 +75,20 @@
     "fiscal_year_end_month": 10,
     "legacy_adapter": "spdr_legacy",
     "active": true
+  },
+  {
+    "etf_id": "VIG",
+    "name": "Vanguard Dividend Appreciation ETF",
+    "issuer": "Vanguard",
+    "cik": "0000734383",
+    "series_id": "S000011322",
+    "series_name_patterns": [
+      "VANGUARD DIVIDEND APPRECIATION INDEX FUND"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 1,
+    "legacy_adapter": "vanguard_legacy",
+    "legacy_fund_title": "Dividend Appreciation Index Fund",
+    "active": true
   }
 ]

@@ -182,17 +182,31 @@ def _find_section_bounds(html_text: str, fund_title: str) -> tuple[int, int]:
     candidates.sort(key=lambda x: (x[0], x[1]))
     start_pos = candidates[0][1]
 
-    # Locate the first "Total Common Stocks" after start_pos (up to 4.5MB window)
+    # Locate the first "Total Common Stocks" or "Total Investments" after start_pos (up to 4.5MB window).
+    # When a fund holds 100% common stocks with zero temporary cash, Vanguard prints "Total Investments"
+    # directly at the end of Common Stocks; taking the earlier terminator also prevents bleeding into
+    # a subsequent fund's section inside multi-fund filings.
     search_window = html_text[start_pos : start_pos + 4_500_000]
-    total_pat = re.compile(
+    total_cs_pat = re.compile(
         r"(?:<[^>]+>|&nbsp;|&#160;|\s)+".join(
             _word_html_pat(w) for w in ("Total", "Common", "Stocks")
         ),
         re.IGNORECASE,
     )
-    m_end = total_pat.search(search_window)
-    if not m_end:
-        raise ValueError(f"'Total Common Stocks' not found after section start for {fund_title!r}")
+    total_inv_pat = re.compile(
+        r"(?:<[^>]+>|&nbsp;|&#160;|\s)+".join(
+            _word_html_pat(w) for w in ("Total", "Investments")
+        ),
+        re.IGNORECASE,
+    )
+    m_cs = total_cs_pat.search(search_window)
+    m_inv = total_inv_pat.search(search_window)
+    terminators = [m for m in (m_cs, m_inv) if m is not None]
+    if not terminators:
+        raise ValueError(
+            f"'Total Common Stocks' / 'Total Investments' not found after section start for {fund_title!r}"
+        )
+    m_end = min(terminators, key=lambda m: m.start())
 
     end_pos = start_pos + m_end.end() + 8000
     return start_pos, min(len(html_text), end_pos)
@@ -265,7 +279,7 @@ def parse_vanguard_legacy_html(
                 break
             waiting_total_val = False
 
-        if "total common stocks" in row_low:
+        if "total common stocks" in row_low or row_low.startswith("total investments"):
             pending_name_parts.clear()
             num = _parse_number(cells[-1])
             if num is not None and num > 0:
@@ -274,9 +288,9 @@ def parse_vanguard_legacy_html(
             waiting_total_val = True
             continue
 
-        # Safety guard for end of common stocks section
+        # Safety guard for end of common stocks section (do NOT accept Total Investments after non-equity sections)
         if row_low.startswith(
-            ("temporary cash investments", "preferred stocks", "corporate bonds", "total investments")
+            ("temporary cash investment", "preferred stocks", "corporate bonds", "short-term")
         ):
             break
 
@@ -380,6 +394,7 @@ def parse_vanguard_legacy_html(
                     "see accompanying",
                     "vanguard whitehall",
                     "vanguard index funds",
+                    "vanguard specialized",
                 )
             )
         ):
