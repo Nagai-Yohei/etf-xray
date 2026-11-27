@@ -203,11 +203,11 @@ def fetch_spdr_legacy_filings(
 
 
 def _title_to_html_regex(title: str) -> re.Pattern[str]:
-    """Build a regex matching a fund title across HTML entities (&amp;, &nbsp;) and whitespace."""
+    """Build a regex matching a fund title across HTML entities (&amp;, &#038;, &reg;, &nbsp;) and whitespace."""
     parts: list[str] = []
     for token in title.split():
-        escaped = re.escape(token).replace(r"\&", r"(?:&amp;|&)")
-        parts.append(escaped)
+        escaped = re.escape(token).replace(r"\&", r"(?:&amp;|&#0?38;|&)")
+        parts.append(escaped + r"(?:<[^>]+>|&reg;|&#174;|®)*")
     return re.compile(r"(?:<[^>]+>|&nbsp;|&#160;|\s)+".join(parts), re.IGNORECASE)
 
 
@@ -228,7 +228,7 @@ def parse_spdr_series_html(
     for m in title_pat.finditer(html_text):
         tail_raw = html_text[m.end() : m.end() + 800]
         tail_plain = _clean_text(re.sub(r"<[^>]+>", " ", tail_raw.replace("&nbsp;", " "))).lower()
-        if "schedule of investments" in tail_plain:
+        if "schedule of investments" in tail_plain and "(continued)" not in tail_plain[:160]:
             start_pos = m.start()
             break
 
@@ -254,6 +254,7 @@ def parse_spdr_series_html(
     merged: dict[str, RawHolding] = {}
     reported_total: float | None = None
     in_common_stocks = False
+    waiting_total_val = False
     pending_name_parts: list[str] = []
 
     for tr in tree.xpath(".//tr"):
@@ -269,6 +270,14 @@ def parse_spdr_series_html(
                 in_common_stocks = True
             continue
 
+        if waiting_total_val:
+            for c in reversed(cells):
+                num = _parse_number(c)
+                if num is not None and num > 0:
+                    reported_total = num
+                    break
+            break
+
         if "total common stock" in first_low:
             pending_name_parts.clear()
             for c in reversed(cells[1:]):
@@ -276,7 +285,10 @@ def parse_spdr_series_html(
                 if num is not None and num > 0:
                     reported_total = num
                     break
-            break
+            if reported_total is not None:
+                break
+            waiting_total_val = True
+            continue
 
         if first_low.startswith(("short-term", "preferred stock", "corporate bond", "total investment")):
             pending_name_parts.clear()

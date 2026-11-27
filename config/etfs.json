@@ -137,5 +137,20 @@
       "iShares Core Dividend Growth ETF"
     ],
     "active": true
+  },
+  {
+    "etf_id": "SDY",
+    "name": "SPDR S&P Dividend ETF",
+    "issuer": "State Street (SPDR)",
+    "cik": "0001064642",
+    "series_id": "S000006981",
+    "series_name_patterns": [
+      "S000006981"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 6,
+    "legacy_adapter": "spdr_series_legacy",
+    "legacy_fund_title": "S&P Dividend ETF",
+    "active": true
   }
 ]

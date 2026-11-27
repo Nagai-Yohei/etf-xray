@@ -89,6 +89,32 @@ class TestSpdrLegacyAdapter(unittest.TestCase):
         self.assertEqual(filing.holdings[1].reported_name, "Apartment Investment & Management Co. Class A")
         self.assertEqual(filing.total_value_usd, 200_000.0)
 
+    def test_parses_spdr_series_numeric_amp_and_two_line_total(self) -> None:
+        html = b"""
+        <html><body>
+        <p>SPDR S&#038;P Dividend ETF</p>
+        <p>SCHEDULE OF INVESTMENTS March 31, 2011</p>
+        <table>
+          <tr><th>Security Description</th><th>Shares</th><th>Value</th></tr>
+          <tr><td>COMMON STOCKS - 99.7%</td></tr>
+          <tr><td>Consolidated Edison, Inc.</td><td>1,000</td><td>$</td><td>50,000</td></tr>
+          <tr><td>TOTAL COMMON STOCKS -</td></tr>
+          <tr><td>(Cost $45,000)</td><td>50,000</td></tr>
+        </table>
+        </body></html>
+        """
+        filing = parse_spdr_series_html(
+            html_bytes=html,
+            etf_id="SDY",
+            fund_title="S&P Dividend ETF",
+            as_of="2011-03-31",
+            form="N-Q",
+            accession="0000950123-11-055335",
+            filed="2011-05-26",
+        )
+        self.assertEqual(len(filing.holdings), 1)
+        self.assertEqual(filing.total_value_usd, 50_000.0)
+
 
 class TestVanguardLegacyAdapter(unittest.TestCase):
     def test_parses_100pct_equity_schedule_ending_with_total_investments(self) -> None:

@@ -499,6 +499,7 @@ Splunk Inc.,848637104,SPLK,Acquired by Cisco in 2024
 "Plum Creek Timber Co., Inc.",,PCL,Merged with Weyerhaeuser in 2016
 "GGP, Inc.",,GGP,Acquired by Brookfield Property Partners in 2018
 Chubb Corp. (The),,CB.OLD,Acquired by ACE Ltd and delisted in 2016 (iShares legacy spelling)
+The Chubb Corp.,,CB.OLD,Acquired by ACE Ltd and delisted in 2016 (SPDR legacy spelling)
 Brown-Forman Corp. Class A,,BF.A,Dual-class disambiguation (Class A)
 Brown-Forman Corp. Class B,,BF.B,Dual-class disambiguation (Class B)
 Brown-Forman Corp,115637100,BF.A,Brown-Forman Class A (CUSIP override)
@@ -577,3 +578,6 @@ CenterState Bank Corp,15201P109,CSFL,Merged with SouthState Corp in 2020
 W R Grace & Co,38388F108,GRA,Taken private by Standard Industries in 2021
 Enhabit Inc,29332G102,EHAB,Spun off from Encompass Health in 2022
 Ferguson PLC,,FERG,Redomiciled as Ferguson Enterprises Inc (FERG) in 2024
+"Halyard Health, Inc.",,HYH,Spun off from Kimberly-Clark in 2014 (later Avanos Medical)
+"Quality Care Properties, Inc.",,QCP,Spun off from HCP in 2016; acquired by Welltower in 2018
+ChampionX Corp,15872M104,CHX,Spun off from Ecolab in 2020; acquired by SLB in 2025
