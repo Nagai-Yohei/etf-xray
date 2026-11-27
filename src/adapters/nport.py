@@ -191,6 +191,53 @@ def parse_nport_xml(
     )
 
 
+def _discover_nport_candidates(
+    client: EdgarClient,
+    etf_cfg: dict[str, Any],
+    *,
+    max_age_days: float | None = None,
+    min_filing_date: str | None = None,
+    offline_only: bool = False,
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+    """Return (all_nport_by_accn, candidate_accns) for the target ETF."""
+    etf_id = etf_cfg["etf_id"]
+    cik = normalize_cik(etf_cfg["cik"])
+    series_id = etf_cfg["series_id"]
+    patterns = etf_cfg.get("series_name_patterns") or [etf_cfg["name"]]
+
+    all_nport = client.get_all_filings(
+        cik,
+        forms={"NPORT-P", "NPORT-P/A"},
+        max_age_days=max_age_days,
+        min_filing_date=min_filing_date,
+        offline_only=offline_only,
+    )
+    by_accn = {f["accessionNumber"]: f for f in all_nport}
+
+    # Single-fund UITs (e.g. DIA, QQQ) have no series_id; every NPORT-P under the CIK belongs to the ETF
+    if series_id is None:
+        return by_accn, dict(by_accn)
+
+    # Filter candidate filings whose primary_doc.xml contains the target fund name / series_id via EFTS
+    candidate_accns: dict[str, dict[str, str]] = {}
+    for idx, pat in enumerate(patterns):
+        cache_key = f"{etf_id}_nport_name" if idx == 0 else f"{etf_id}_nport_name_{idx}"
+        hits = client.search_efts_accessions(
+            f'"{pat}"',
+            "NPORT-P",
+            cache_key,
+            max_age_days=max_age_days,
+            offline_only=offline_only,
+        )
+        for hit in hits:
+            hid = str(hit.get("_id") or "")
+            adsh = str((hit.get("_source") or {}).get("adsh") or "")
+            if adsh in by_accn and hid.endswith("primary_doc.xml"):
+                candidate_accns[adsh] = by_accn[adsh]
+
+    return by_accn, candidate_accns
+
+
 def fetch_etf_nport_filings(
     client: EdgarClient,
     etf_cfg: dict[str, Any],
@@ -199,25 +246,8 @@ def fetch_etf_nport_filings(
     etf_id = etf_cfg["etf_id"]
     cik = normalize_cik(etf_cfg["cik"])
     series_id = etf_cfg["series_id"]
-    patterns = etf_cfg.get("series_name_patterns") or [etf_cfg["name"]]
 
-    all_nport = client.get_all_filings(cik, forms={"NPORT-P", "NPORT-P/A"})
-    by_accn = {f["accessionNumber"]: f for f in all_nport}
-
-    # Single-fund UITs (e.g. DIA) have no series_id; every NPORT-P under the CIK belongs to the ETF
-    if series_id is None:
-        candidate_accns = dict(by_accn)
-    else:
-        # Filter candidate filings whose primary_doc.xml contains the target fund name via EFTS
-        candidate_accns = {}
-        for idx, pat in enumerate(patterns):
-            cache_key = f"{etf_id}_nport_name" if idx == 0 else f"{etf_id}_nport_name_{idx}"
-            hits = client.search_efts_accessions(f'"{pat}"', "NPORT-P", cache_key)
-            for hit in hits:
-                hid = str(hit.get("_id") or "")
-                adsh = str((hit.get("_source") or {}).get("adsh") or "")
-                if adsh in by_accn and hid.endswith("primary_doc.xml"):
-                    candidate_accns[adsh] = by_accn[adsh]
+    _, candidate_accns = _discover_nport_candidates(client, etf_cfg)
 
     # Prefer the latest filingDate when amendments (NPORT-P/A) exist for the same reportDate
     by_as_of: dict[str, FilingHoldings] = {}
@@ -240,6 +270,89 @@ def fetch_etf_nport_filings(
             if "Series ID mismatch" in str(exc):
                 continue
             raise
+
+        prev = by_as_of.get(parsed.as_of)
+        if prev is None or parsed.filed >= prev.filed:
+            by_as_of[parsed.as_of] = parsed
+
+    return [by_as_of[d] for d in sorted(by_as_of)]
+
+
+def fetch_new_etf_nport_filings(
+    client: EdgarClient,
+    etf_cfg: dict[str, Any],
+    existing_dates: dict[str, str],
+    *,
+    max_age_days: float | None = 0.5,
+    offline_only: bool = False,
+) -> list[FilingHoldings]:
+    """Fetch and parse only new or newly amended N-PORT-P filings not yet in existing_dates.
+
+    `existing_dates` maps reporting date (`as_of`) -> stored `accession`.
+    """
+    etf_id = etf_cfg["etf_id"]
+    cik = normalize_cik(etf_cfg["cik"])
+    series_id = etf_cfg["series_id"]
+
+    min_filing_date: str | None = None
+    if existing_dates:
+        latest_as_of = max(existing_dates)
+        # Keep a 1-year lookback window to catch late NPORT-P/A amendments
+        if len(latest_as_of) >= 4 and latest_as_of[:4].isdigit():
+            min_filing_date = f"{int(latest_as_of[:4]) - 1}{latest_as_of[4:]}"
+
+    by_accn, candidate_accns = _discover_nport_candidates(
+        client,
+        etf_cfg,
+        max_age_days=max_age_days,
+        min_filing_date=min_filing_date,
+        offline_only=offline_only,
+    )
+
+    known_accessions = {accn for accn in existing_dates.values() if accn}
+    by_as_of: dict[str, FilingHoldings] = {}
+
+    for accn, meta in sorted(
+        candidate_accns.items(),
+        key=lambda kv: (kv[1]["reportDate"], kv[1]["filingDate"], kv[0]),
+    ):
+        if accn in known_accessions:
+            continue
+
+        report_date = meta.get("reportDate") or ""
+        filing_date = meta.get("filingDate") or ""
+        existing_accn = existing_dates.get(report_date)
+        if existing_accn:
+            existing_meta = by_accn.get(existing_accn)
+            # Skip superseded originals when a newer amendment is already stored
+            if existing_meta and filing_date <= (existing_meta.get("filingDate") or ""):
+                continue
+
+        doc_name = meta.get("primaryDocument") or "primary_doc.xml"
+        xml_bytes = client.get_filing_document(
+            cik, accn, doc_name, offline_only=offline_only
+        )
+        try:
+            parsed = parse_nport_xml(
+                xml_bytes=xml_bytes,
+                etf_id=etf_id,
+                expected_series_id=series_id,
+                accession=accn,
+                filed=filing_date,
+            )
+        except ValueError as exc:
+            if "Series ID mismatch" in str(exc):
+                continue
+            raise
+
+        # Re-check against actual XML repPdDate in case submission metadata reportDate differed
+        stored_accn = existing_dates.get(parsed.as_of)
+        if stored_accn == parsed.accession:
+            continue
+        if stored_accn:
+            stored_meta = by_accn.get(stored_accn)
+            if stored_meta and parsed.filed <= (stored_meta.get("filingDate") or ""):
+                continue
 
         prev = by_as_of.get(parsed.as_of)
         if prev is None or parsed.filed >= prev.filed:

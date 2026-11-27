@@ -73,24 +73,44 @@ class EdgarClient:
         if elapsed < self.min_interval:
             time.sleep(self.min_interval - elapsed)
 
-    def fetch_bytes(
+    @staticmethod
+    def _is_cache_fresh(path: Path, max_age_days: float | None) -> bool:
+        """Return True if cached file is within max_age_days (None = never expires)."""
+        if max_age_days is None:
+            return True
+        if max_age_days <= 0:
+            return False
+        age_sec = time.time() - path.stat().st_mtime
+        return age_sec < (max_age_days * 86400.0)
+
+    def fetch_bytes_with_status(
         self,
         url: str,
         cache_rel_path: str | Path,
         force_refresh: bool = False,
         offline_only: bool = False,
-    ) -> bytes:
-        """Fetch raw bytes from URL and cache under data/raw/edgar."""
+        max_age_days: float | None = None,
+    ) -> tuple[bytes, bool]:
+        """Fetch raw bytes from URL with disk caching, returning (bytes, changed).
+
+        `changed` is True only when a network fetch occurred and the response bytes
+        differed from any previously cached file.
+        """
         cache_path = self.cache_dir / cache_rel_path
         not_found_marker = cache_path.with_suffix(cache_path.suffix + ".404")
         if not force_refresh:
-            if cache_path.is_file():
-                return cache_path.read_bytes()
-            if not_found_marker.is_file():
+            if cache_path.is_file() and (
+                offline_only or self._is_cache_fresh(cache_path, max_age_days)
+            ):
+                return cache_path.read_bytes(), False
+            if not_found_marker.is_file() and (
+                offline_only or self._is_cache_fresh(not_found_marker, max_age_days)
+            ):
                 raise RuntimeError(f"SEC EDGAR request failed with HTTP 404 (cached) for {url}")
             if offline_only:
                 raise RuntimeError(f"SEC EDGAR cache miss in offline mode for {url}")
 
+        old_bytes = cache_path.read_bytes() if cache_path.is_file() else None
         session = self._get_session()
         last_error: Exception | None = None
 
@@ -113,7 +133,7 @@ class EdgarClient:
                 tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
                 tmp_path.write_bytes(data)
                 tmp_path.replace(cache_path)
-                return data
+                return data, (old_bytes != data)
 
             if response.status_code == 404:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,29 +162,103 @@ class EdgarClient:
             f"SEC EDGAR request failed after {self.max_retries} attempts for {url}: {last_error}"
         )
 
+    def refresh_bytes_if_stale(
+        self,
+        url: str,
+        cache_rel_path: str | Path,
+        force_refresh: bool = False,
+        offline_only: bool = False,
+        max_age_days: float | None = None,
+    ) -> bool:
+        """Refresh cached file only when missing or older than max_age_days; return True if bytes changed.
+
+        Avoids reading or decoding large cached files on fresh cache hits.
+        """
+        cache_path = self.cache_dir / cache_rel_path
+        not_found_marker = cache_path.with_suffix(cache_path.suffix + ".404")
+        if not force_refresh:
+            if cache_path.is_file() and (
+                offline_only or self._is_cache_fresh(cache_path, max_age_days)
+            ):
+                return False
+            if not_found_marker.is_file() and (
+                offline_only or self._is_cache_fresh(not_found_marker, max_age_days)
+            ):
+                raise RuntimeError(f"SEC EDGAR request failed with HTTP 404 (cached) for {url}")
+            if offline_only:
+                raise RuntimeError(f"SEC EDGAR cache miss in offline mode for {url}")
+
+        _, changed = self.fetch_bytes_with_status(
+            url,
+            cache_rel_path,
+            force_refresh=force_refresh,
+            offline_only=offline_only,
+            max_age_days=max_age_days,
+        )
+        return changed
+
+    def fetch_bytes(
+        self,
+        url: str,
+        cache_rel_path: str | Path,
+        force_refresh: bool = False,
+        offline_only: bool = False,
+        max_age_days: float | None = None,
+    ) -> bytes:
+        """Fetch raw bytes from URL and cache under data/raw/edgar."""
+        data, _ = self.fetch_bytes_with_status(
+            url,
+            cache_rel_path,
+            force_refresh=force_refresh,
+            offline_only=offline_only,
+            max_age_days=max_age_days,
+        )
+        return data
+
     def fetch_json(
         self,
         url: str,
         cache_rel_path: str | Path,
         force_refresh: bool = False,
         offline_only: bool = False,
+        max_age_days: float | None = None,
     ) -> Any:
         raw = self.fetch_bytes(
-            url, cache_rel_path, force_refresh=force_refresh, offline_only=offline_only
+            url,
+            cache_rel_path,
+            force_refresh=force_refresh,
+            offline_only=offline_only,
+            max_age_days=max_age_days,
         )
         return json.loads(raw.decode("utf-8"))
 
-    def get_company_tickers(self, force_refresh: bool = False) -> dict[str, dict[str, Any]]:
+    def get_company_tickers(
+        self,
+        force_refresh: bool = False,
+        max_age_days: float | None = None,
+        offline_only: bool = False,
+    ) -> dict[str, dict[str, Any]]:
         """Fetch SEC's official ticker-to-CIK mapping JSON."""
         return self.fetch_json(
             COMPANY_TICKERS_URL,
             "company_tickers.json",
             force_refresh=force_refresh,
+            offline_only=offline_only,
+            max_age_days=max_age_days,
         )
 
-    def build_ticker_to_cik_map(self, force_refresh: bool = False) -> dict[str, str]:
+    def build_ticker_to_cik_map(
+        self,
+        force_refresh: bool = False,
+        max_age_days: float | None = None,
+        offline_only: bool = False,
+    ) -> dict[str, str]:
         """Return a mapping of uppercase ticker to 10-digit CIK."""
-        raw = self.get_company_tickers(force_refresh=force_refresh)
+        raw = self.get_company_tickers(
+            force_refresh=force_refresh,
+            max_age_days=max_age_days,
+            offline_only=offline_only,
+        )
         mapping: dict[str, str] = {}
         for item in raw.values():
             ticker = str(item.get("ticker", "")).strip().upper()
@@ -178,15 +272,52 @@ class EdgarClient:
         cik: int | str,
         force_refresh: bool = False,
         offline_only: bool = False,
+        max_age_days: float | None = None,
     ) -> dict[str, Any]:
         """Fetch XBRL companyfacts JSON for the given CIK."""
+        payload, _ = self.get_company_facts_with_status(
+            cik,
+            force_refresh=force_refresh,
+            offline_only=offline_only,
+            max_age_days=max_age_days,
+        )
+        return payload
+
+    def get_company_facts_with_status(
+        self,
+        cik: int | str,
+        force_refresh: bool = False,
+        offline_only: bool = False,
+        max_age_days: float | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Fetch XBRL companyfacts JSON and return (payload, changed)."""
         cik10 = normalize_cik(cik)
         url = COMPANY_FACTS_URL.format(cik=cik10)
-        return self.fetch_json(
+        raw, changed = self.fetch_bytes_with_status(
             url,
             Path("companyfacts") / f"CIK{cik10}.json",
             force_refresh=force_refresh,
             offline_only=offline_only,
+            max_age_days=max_age_days,
+        )
+        return json.loads(raw.decode("utf-8")), changed
+
+    def refresh_company_facts(
+        self,
+        cik: int | str,
+        force_refresh: bool = False,
+        offline_only: bool = False,
+        max_age_days: float | None = None,
+    ) -> bool:
+        """Refresh cached XBRL companyfacts JSON if stale and return True if bytes changed."""
+        cik10 = normalize_cik(cik)
+        url = COMPANY_FACTS_URL.format(cik=cik10)
+        return self.refresh_bytes_if_stale(
+            url,
+            Path("companyfacts") / f"CIK{cik10}.json",
+            force_refresh=force_refresh,
+            offline_only=offline_only,
+            max_age_days=max_age_days,
         )
 
     def get_submissions(
@@ -194,6 +325,7 @@ class EdgarClient:
         cik: int | str,
         force_refresh: bool = False,
         offline_only: bool = False,
+        max_age_days: float | None = None,
     ) -> dict[str, Any]:
         """Fetch the submissions JSON listing filings and entity metadata (including SIC) for the given CIK."""
         cik10 = normalize_cik(cik)
@@ -203,6 +335,7 @@ class EdgarClient:
             Path("submissions") / f"CIK{cik10}.json",
             force_refresh=force_refresh,
             offline_only=offline_only,
+            max_age_days=max_age_days,
         )
 
     def get_all_filings(
@@ -210,9 +343,17 @@ class EdgarClient:
         cik: int | str,
         forms: set[str] | None = None,
         force_refresh: bool = False,
+        max_age_days: float | None = None,
+        min_filing_date: str | None = None,
+        offline_only: bool = False,
     ) -> list[dict[str, str]]:
         """Return all filings combining recent and historical archive submission files."""
-        sub = self.get_submissions(cik, force_refresh=force_refresh)
+        sub = self.get_submissions(
+            cik,
+            force_refresh=force_refresh,
+            offline_only=offline_only,
+            max_age_days=max_age_days,
+        )
         chunks: list[dict[str, list[Any]]] = []
         recent = (sub.get("filings") or {}).get("recent")
         if recent:
@@ -222,10 +363,15 @@ class EdgarClient:
             fname = extra.get("name")
             if not fname:
                 continue
+            filing_to = str(extra.get("filingTo") or "")
+            if min_filing_date and filing_to and filing_to < min_filing_date:
+                continue
             extra_data = self.fetch_json(
                 SUBMISSIONS_EXTRA_URL.format(filename=fname),
                 Path("submissions") / fname,
                 force_refresh=force_refresh,
+                offline_only=offline_only,
+                max_age_days=max_age_days,
             )
             chunks.append(extra_data)
 
@@ -256,6 +402,7 @@ class EdgarClient:
         cik: int | str,
         accession: str,
         force_refresh: bool = False,
+        offline_only: bool = False,
     ) -> dict[str, Any]:
         """Fetch index.json for a filing directory."""
         cik_int = int(normalize_cik(cik))
@@ -265,6 +412,7 @@ class EdgarClient:
             url,
             Path("archives") / str(cik_int) / acc_nodash / "index.json",
             force_refresh=force_refresh,
+            offline_only=offline_only,
         )
 
     def get_filing_document(
@@ -273,6 +421,7 @@ class EdgarClient:
         accession: str,
         doc_name: str,
         force_refresh: bool = False,
+        offline_only: bool = False,
     ) -> bytes:
         """Fetch an individual document (XML / HTML, etc.) from a filing."""
         cik_int = int(normalize_cik(cik))
@@ -288,6 +437,7 @@ class EdgarClient:
             url,
             Path("archives") / str(cik_int) / acc_nodash / clean_name,
             force_refresh=force_refresh,
+            offline_only=offline_only,
         )
 
     def search_efts_accessions(
@@ -296,6 +446,8 @@ class EdgarClient:
         forms: str,
         cache_key: str,
         force_refresh: bool = False,
+        max_age_days: float | None = None,
+        offline_only: bool = False,
     ) -> list[dict[str, Any]]:
         """Search SEC EDGAR EFTS full-text index for matching filing accessions."""
         from urllib.parse import urlencode
@@ -317,6 +469,8 @@ class EdgarClient:
                 url,
                 Path("efts") / f"{cache_key}_from_{start_from}.json",
                 force_refresh=force_refresh,
+                offline_only=offline_only,
+                max_age_days=max_age_days,
             )
             hits = ((data.get("hits") or {}).get("hits")) or []
             if not hits:

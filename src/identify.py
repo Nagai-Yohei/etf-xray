@@ -214,7 +214,11 @@ class OpenFigiClient:
                 best = (score[0], score[1], item)
         return best[2] if best else None
 
-    def resolve_batch(self, queries: list[tuple[str, str]]) -> None:
+    def resolve_batch(
+        self,
+        queries: list[tuple[str, str]],
+        offline_only: bool = False,
+    ) -> None:
         """Batch-resolve uncached (idType, idValue) pairs via OpenFIGI API and persist to cache."""
         missing: list[tuple[str, str]] = []
         seen: set[str] = set()
@@ -225,7 +229,7 @@ class OpenFigiClient:
             seen.add(cache_key)
             missing.append((id_type, id_val))
 
-        if not missing:
+        if not missing or offline_only:
             return
 
         # Free tier allows 10 jobs/request; authenticated API key allows 100 jobs/request
@@ -321,9 +325,15 @@ class OpenFigiClient:
 
 def _build_sec_maps(
     client: EdgarClient,
+    *,
+    max_age_days: float | None = None,
+    offline_only: bool = False,
 ) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     """Build (ticker->cik, norm_name->(ticker, cik)) maps from SEC company_tickers.json."""
-    raw = client.get_company_tickers()
+    raw = client.get_company_tickers(
+        max_age_days=max_age_days,
+        offline_only=offline_only,
+    )
     ticker_to_cik: dict[str, str] = {}
     name_to_sec: dict[str, tuple[str, str]] = {}
 
@@ -357,11 +367,18 @@ def _build_sec_maps(
 def resolve_all_filings(
     client: EdgarClient,
     filings: list[FilingHoldings],
+    *,
+    tickers_max_age_days: float | None = None,
+    offline_only: bool = False,
 ) -> tuple[dict[str, list[ResolvedHolding]], dict[str, dict[str, Any]]]:
     """Resolve holdings across all reporting dates and return (by_as_of_holdings, securities_catalog)."""
     manual_cusip, manual_exact_name, manual_norm_name = load_manual_tickers()
     cik_overrides = load_cik_overrides()
-    ticker_to_cik, sec_name_map = _build_sec_maps(client)
+    ticker_to_cik, sec_name_map = _build_sec_maps(
+        client,
+        max_age_days=tickers_max_age_days,
+        offline_only=offline_only,
+    )
     figi = OpenFigiClient()
 
     # 1. Collect and batch-resolve OpenFIGI queries for filings with CUSIP / ISIN (N-PORT, etc.)
@@ -374,7 +391,7 @@ def resolve_all_filings(
                 figi_queries.append(("ID_CUSIP", h.cusip))
             elif h.isin:
                 figi_queries.append(("ID_ISIN", h.isin))
-    figi.resolve_batch(figi_queries)
+    figi.resolve_batch(figi_queries, offline_only=offline_only)
 
     # 2. Pass 1: Build a normalized-name bridge from filings with CUSIP / ISIN (N-PORT).
     #    Exclude ambiguous keys shared by multiple tickers (e.g. GOOG/GOOGL, FOX/FOXA, BRK.A/BRK.B, CWEN/CWEN.A)

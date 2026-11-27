@@ -37,20 +37,37 @@ case "$CMD" in
     exec "$PYTHON_BIN" -m src.deploy "$@"
     ;;
   refresh)
+    USE_FULL=0
     DO_DEPLOY=0
-    BUILD_ARGS=()
+    ARGS=()
     for arg in "$@"; do
-      if [ "$arg" = "--deploy" ]; then
+      if [ "$arg" = "--full" ]; then
+        USE_FULL=1
+      elif [ "$arg" = "--deploy" ]; then
         DO_DEPLOY=1
+        ARGS+=("$arg")
       else
-        BUILD_ARGS+=("$arg")
+        ARGS+=("$arg")
       fi
     done
-    "$PYTHON_BIN" -m src.pipeline "${BUILD_ARGS[@]}"
-    "$PYTHON_BIN" -m src.check
-    if [ "$DO_DEPLOY" -eq 1 ]; then
-      exec "$PYTHON_BIN" -m src.deploy
+    if [ "$USE_FULL" -eq 1 ]; then
+      BUILD_ARGS=()
+      for arg in ${ARGS[@]+"${ARGS[@]}"}; do
+        if [ "$arg" != "--deploy" ]; then
+          BUILD_ARGS+=("$arg")
+        fi
+      done
+      "$PYTHON_BIN" -m src.pipeline ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}
+      "$PYTHON_BIN" -m src.check
+      if [ "$DO_DEPLOY" -eq 1 ]; then
+        exec "$PYTHON_BIN" -m src.deploy
+      fi
+    else
+      exec "$PYTHON_BIN" -m src.refresh ${ARGS[@]+"${ARGS[@]}"}
     fi
+    ;;
+  schedule)
+    exec bash "$ROOT_DIR/scripts/schedule_launchd.sh" "$@"
     ;;
   *)
     cat <<'EOF'
@@ -61,7 +78,8 @@ Commands:
   export     Re-export dist/ (web assets + split JSON) from existing SQLite DB
   check      Run data integrity checks + secret/PII leak scan + unit tests
   test       Run unit test suite (tests/)
-  refresh    Run build + check (pass --deploy to upload to Cloudflare Pages if check passes)
+  refresh    Incremental SEC refresh + check (add --deploy to upload if changed; --full for full rebuild)
+  schedule   Manage local macOS launchd periodic refresh (install|status|run-now|uninstall)
   init-db    Initialize local SQLite database (data/market.db)
   serve      Start local HTTP server with production CSP headers
   deploy     Upload dist/ to Cloudflare Pages via Direct Upload API

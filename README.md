@@ -38,9 +38,25 @@ Set `SEC_USER_AGENT` in `.env` to your app/name and contact email per SEC EDGAR 
 ./run.sh export                     # Re-export dist/ from existing SQLite DB
 ./run.sh test                       # Run unit test suite (tests/)
 ./run.sh check                      # Run unit tests, data integrity checks, and secret/PII scan
-./run.sh refresh                    # Run build + check (add --deploy to upload if check passes)
+./run.sh refresh                    # Incremental SEC check (N-PORT-P + stale active XBRL -> check; add --deploy to publish if changed)
+./run.sh refresh --full             # Full pipeline rebuild + check
+./run.sh schedule install           # Install local macOS launchd weekly refresh (check-only by default; add --deploy to auto-publish)
+./run.sh schedule status            # Inspect launchd status and latest refresh summary log
 ./run.sh serve                      # Preview dist/ locally at http://127.0.0.1:8787/
 ./run.sh deploy                     # Upload dist/ to Cloudflare Pages via Direct Upload API
+```
+
+## Periodic Updates (macOS `launchd`)
+
+`./run.sh refresh` runs incrementally by default: it checks SEC EDGAR for newly filed or amended `N-PORT-P` quarters without re-parsing immutable 2011–2019 legacy HTML reports, refreshes active securities' XBRL `CompanyFacts` older than 14 days (`--xbrl-max-age-days`), aborts safely before database mutation if an unresolved ticker appears, and skips rebuild/export/deploy when no upstream changes are detected. Refresh summaries are written to `data/logs/refresh-YYYY-MM-DD.log`.
+
+To schedule automated local runs on macOS without storing credentials or absolute paths in the repository:
+
+```bash
+./run.sh schedule install                    # Sunday 07:00 local time, check-only
+./run.sh schedule install --deploy           # Sunday 07:00 local time, auto-deploy after src.check passes
+./run.sh schedule status                     # Check registration and tail the latest refresh log
+./run.sh schedule uninstall                  # Unload and remove the LaunchAgent
 ```
 
 ## Overview
