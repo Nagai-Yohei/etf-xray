@@ -217,6 +217,50 @@ class TestMetricsIntegration(unittest.TestCase):
         self.assertEqual((sec["first_seen"], sec["last_seen"]), ("2026-06-30", "2026-06-30"))
         conn.close()
 
+    def test_roe_5y_median_and_fcf_growth_metrics(self) -> None:
+        conn = _new_memory_db()
+        _insert_stock(conn, "GROW", sector_group=None)
+        _insert_stock(conn, "BANK2", sector_group="bank")
+
+        # Replace single annual row with 6 years of history (FY2020..FY2025)
+        for sec_id in ("GROW", "BANK2"):
+            conn.execute("DELETE FROM financials_annual WHERE security_id = ?", (sec_id,))
+            yearly = [
+                ("2020-12-31", 100.0, 500.0, 100.0),   # ROE 20%, FCF 100
+                ("2021-12-31", 120.0, 600.0, -10.0),   # ROE 20%, FCF -10 (breaks streak earlier)
+                ("2022-12-31", 150.0, 600.0, 110.0),   # ROE 25%, FCF 110
+                ("2023-12-31", 180.0, 600.0, 130.0),   # ROE 30%, FCF 130
+                ("2024-12-31", 140.0, 700.0, 150.0),   # ROE 20%, FCF 150
+                ("2025-12-31", 175.0, 700.0, 161.051), # ROE 25%, FCF 161.051 (+10% 5Y CAGR from 100)
+            ]
+            for fy, ni, eq, fcf in yearly:
+                conn.execute(
+                    """
+                    INSERT INTO financials_annual (
+                        security_id, fy_end, revenue, net_income, total_equity, fcf, split_factor
+                    ) VALUES (?, ?, 1000.0, ?, ?, ?, 1.0)
+                    """,
+                    (sec_id, fy, ni, eq, fcf),
+                )
+
+        rebuild_quarter_prices(conn)
+        rebuild_stock_metrics(conn)
+        rows = {
+            r["security_id"]: r
+            for r in conn.execute("SELECT * FROM stock_metrics").fetchall()
+        }
+
+        # Standard corporate: last 5 ROEs = [20%, 25%, 30%, 20%, 25%] -> median 25%
+        self.assertAlmostEqual(rows["GROW"]["roe_5y_median"], 0.25, places=4)
+        self.assertAlmostEqual(rows["GROW"]["fcf_cagr_5y"], 0.10, places=3)
+        self.assertEqual(rows["GROW"]["fcf_positive_years"], 4)
+
+        # Bank retains 5Y median ROE, suppresses FCF growth and streak
+        self.assertAlmostEqual(rows["BANK2"]["roe_5y_median"], 0.25, places=4)
+        self.assertIsNone(rows["BANK2"]["fcf_cagr_5y"])
+        self.assertIsNone(rows["BANK2"]["fcf_positive_years"])
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

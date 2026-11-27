@@ -1,7 +1,7 @@
 /**
- * Cross-ETF Stock Screener (#/screener).
- * Screens all covered ETF constituents (active and historical) across SEC XBRL fundamentals,
- * dividend history, valuation multiples, accounting sectors, and multi-ETF membership.
+ * Stock Screener (#/screener).
+ * Screens U.S. stocks held across covered ETFs using SEC XBRL fundamentals,
+ * cash flows, ROE, dividend history, valuation multiples, and ETF membership.
  */
 
 import { destroyAllCharts } from "./charts.js";
@@ -19,6 +19,7 @@ import {
 import {
   buildScreenerCsv,
   computeScreenerSummary,
+  countCategoryFilters,
   createFilters,
   DEFAULT_FILTERS,
   describeActiveFilters,
@@ -32,16 +33,28 @@ import {
   sortStocks,
 } from "./screener-helpers.js";
 
+const fmtYears = (v) => (v !== null && v !== undefined && Number.isFinite(Number(v)) ? `${Number(v)} yrs` : "—");
+
 const COLUMN_SETS = {
   Overview: [
     { key: "latest_price", label: "Price", csvDecimals: 2, get: (r) => r.latest_price, fmt: (v) => fmtPrice(v) },
     { key: "ttm_yield", label: "TTM Yield", csvPct: true, get: (r) => r.ttm_yield, fmt: (v) => fmtPct(v, 2) },
     { key: "div_streak_years", label: "Div Streak", csvDecimals: 0, get: (r) => r.div_streak_years, fmt: (v, r) => fmtStreak(v, r.div_streak_open) },
-    { key: "div_cagr_5y", label: "5Y Div CAGR", csvPct: true, get: (r) => r.div_cagr_5y, fmt: (v) => fmtPct(v, 1, true) },
-    { key: "payout_ratio_eps", label: "Payout (EPS)", csvPct: true, get: (r) => r.payout_ratio_eps, fmt: (v) => fmtPct(v, 1) },
-    { key: "pe_ratio", label: "P/E (TTM)", csvDecimals: 2, get: (r) => r.pe_ratio, fmt: (v) => fmtMultiple(v) },
+    { key: "fcf_cagr_5y", label: "5Y FCF CAGR", csvPct: true, get: (r) => r.fcf_cagr_5y, fmt: (v) => fmtPct(v, 1, true) },
+    { key: "roe_5y_median", label: "5Y Med ROE", csvPct: true, get: (r) => r.roe_5y_median, fmt: (v) => fmtPct(v, 1) },
     { key: "roic", label: "ROIC", csvPct: true, get: (r) => r.roic, fmt: (v) => fmtPct(v, 1) },
+    { key: "pe_ratio", label: "P/E (TTM)", csvDecimals: 2, get: (r) => r.pe_ratio, fmt: (v) => fmtMultiple(v) },
     { key: "revenue_ttm", label: "TTM Rev", csvDecimals: 0, get: (r) => r.revenue_ttm, fmt: (v) => fmtUsdCompact(v) },
+  ],
+  "Cash Flow & ROE": [
+    { key: "fcf_ttm", label: "TTM FCF", csvDecimals: 0, get: (r) => r.fcf_ttm, fmt: (v) => fmtUsdCompact(v) },
+    { key: "fcf_cagr_5y", label: "5Y FCF CAGR", csvPct: true, get: (r) => r.fcf_cagr_5y, fmt: (v) => fmtPct(v, 1, true) },
+    { key: "fcf_margin", label: "FCF Margin", csvPct: true, get: (r) => r.fcf_margin, fmt: (v) => fmtPct(v, 1) },
+    { key: "fcf_ex_sbc_margin", label: "Adj. FCF Mgn", csvPct: true, get: (r) => r.fcf_ex_sbc_margin, fmt: (v) => fmtPct(v, 1) },
+    { key: "fcf_positive_years", label: "FCF +Yrs", csvDecimals: 0, get: (r) => r.fcf_positive_years, fmt: fmtYears },
+    { key: "roe", label: "ROE", csvPct: true, get: (r) => r.roe, fmt: (v) => fmtPct(v, 1) },
+    { key: "roe_5y_median", label: "5Y Med ROE", csvPct: true, get: (r) => r.roe_5y_median, fmt: (v) => fmtPct(v, 1) },
+    { key: "roic", label: "ROIC", csvPct: true, get: (r) => r.roic, fmt: (v) => fmtPct(v, 1) },
   ],
   Dividend: [
     { key: "ttm_yield", label: "TTM Yield", csvPct: true, get: (r) => r.ttm_yield, fmt: (v) => fmtPct(v, 2) },
@@ -57,9 +70,9 @@ const COLUMN_SETS = {
     { key: "rev_cagr_5y", label: "5Y Rev CAGR", csvPct: true, get: (r) => r.rev_cagr_5y, fmt: (v) => fmtPct(v, 1, true) },
     { key: "gross_margin", label: "Gross Margin", csvPct: true, get: (r) => r.gross_margin, fmt: (v) => fmtPct(v, 1) },
     { key: "op_margin", label: "Op Margin", csvPct: true, get: (r) => r.op_margin, fmt: (v) => fmtPct(v, 1) },
-    { key: "fcf_ex_sbc_margin", label: "Adj. FCF Mgn", csvPct: true, get: (r) => r.fcf_ex_sbc_margin, fmt: (v) => fmtPct(v, 1) },
+    { key: "fcf_cagr_5y", label: "5Y FCF CAGR", csvPct: true, get: (r) => r.fcf_cagr_5y, fmt: (v) => fmtPct(v, 1, true) },
     { key: "roic", label: "ROIC", csvPct: true, get: (r) => r.roic, fmt: (v) => fmtPct(v, 1) },
-    { key: "roe", label: "ROE", csvPct: true, get: (r) => r.roe, fmt: (v) => fmtPct(v, 1) },
+    { key: "roe_5y_median", label: "5Y Med ROE", csvPct: true, get: (r) => r.roe_5y_median, fmt: (v) => fmtPct(v, 1) },
     { key: "share_change_5y", label: "5Y Share Δ", csvPct: true, get: (r) => r.share_change_5y, fmt: (v) => fmtPct(v, 1, true) },
   ],
   Valuation: [
@@ -73,18 +86,46 @@ const COLUMN_SETS = {
   ],
 };
 
-const NUMERIC_FILTER_FIELDS = [
-  { key: "minYield", label: "Min Yield", unit: "%", placeholder: "e.g. 2.5", step: "0.5" },
-  { key: "maxYield", label: "Max Yield", unit: "%", placeholder: "e.g. 8", step: "0.5" },
-  { key: "minStreak", label: "Min Div Streak", unit: "yrs", placeholder: "e.g. 10", step: "1" },
-  { key: "minDivCagr5y", label: "Min 5Y Div CAGR", unit: "%", placeholder: "e.g. 5", step: "1" },
-  { key: "maxPayoutEps", label: "Max Payout (EPS)", unit: "%", placeholder: "e.g. 80", step: "5" },
-  { key: "maxPayoutFcf", label: "Max Payout (FCF)", unit: "%", placeholder: "e.g. 85", step: "5" },
-  { key: "maxPe", label: "Max P/E (TTM)", unit: "x", placeholder: "e.g. 25", step: "1" },
-  { key: "minRoic", label: "Min ROIC", unit: "%", placeholder: "e.g. 12", step: "1" },
-  { key: "minOpMargin", label: "Min Op Margin", unit: "%", placeholder: "e.g. 15", step: "1" },
-  { key: "minRevCagr5y", label: "Min 5Y Rev CAGR", unit: "%", placeholder: "e.g. 5", step: "1" },
-  { key: "maxShareChange5y", label: "Max 5Y Share Δ", unit: "%", placeholder: "e.g. 0", step: "1" },
+const FILTER_TABS = [
+  {
+    id: "dividend",
+    label: "Dividend",
+    fields: [
+      { key: "minYield", label: "Min Yield", unit: "%", placeholder: "e.g. 2.5", step: "0.5" },
+      { key: "maxYield", label: "Max Yield", unit: "%", placeholder: "e.g. 8", step: "0.5" },
+      { key: "minStreak", label: "Min Div Streak", unit: "yrs", placeholder: "e.g. 10", step: "1" },
+      { key: "minDivCagr5y", label: "Min 5Y Div CAGR", unit: "%", placeholder: "e.g. 5", step: "1" },
+      { key: "maxPayoutEps", label: "Max Payout (EPS)", unit: "%", placeholder: "e.g. 80", step: "5" },
+      { key: "maxPayoutFcf", label: "Max Payout (FCF)", unit: "%", placeholder: "e.g. 85", step: "5" },
+    ],
+  },
+  {
+    id: "cashflow",
+    label: "Cash Flow & ROE",
+    fields: [
+      { key: "minFcfCagr5y", label: "Min 5Y FCF CAGR", unit: "%", placeholder: "e.g. 8", step: "1" },
+      { key: "minFcfMargin", label: "Min FCF Margin", unit: "%", placeholder: "e.g. 10", step: "1" },
+      { key: "minFcfStreak", label: "Min FCF +Yrs", unit: "yrs", placeholder: "e.g. 5", step: "1" },
+      { key: "minRoe", label: "Min ROE (Latest)", unit: "%", placeholder: "e.g. 15", step: "1" },
+      { key: "minRoe5y", label: "Min 5Y Med ROE", unit: "%", placeholder: "e.g. 15", step: "1" },
+    ],
+  },
+  {
+    id: "quality",
+    label: "Quality & Valuation",
+    fields: [
+      { key: "minRoic", label: "Min ROIC", unit: "%", placeholder: "e.g. 12", step: "1" },
+      { key: "minOpMargin", label: "Min Op Margin", unit: "%", placeholder: "e.g. 15", step: "1" },
+      { key: "minRevCagr5y", label: "Min 5Y Rev CAGR", unit: "%", placeholder: "e.g. 5", step: "1" },
+      { key: "maxPe", label: "Max P/E (TTM)", unit: "x", placeholder: "e.g. 25", step: "1" },
+      { key: "maxShareChange5y", label: "Max 5Y Share Δ", unit: "%", placeholder: "e.g. 0", step: "1" },
+    ],
+  },
+  {
+    id: "etf",
+    label: "ETF Membership",
+    fields: [],
+  },
 ];
 
 export async function renderScreenerView(
@@ -105,11 +146,23 @@ export async function renderScreenerView(
   const initial = parseScreenerQuery(queryParams, etfIds);
   const validColSet = COLUMN_SETS[initial.colSet] ? initial.colSet : "Overview";
 
+  // Pick initial filter tab matching whichever category already has URL filters
+  const initCounts = countCategoryFilters(initial.filters);
+  const defaultTab =
+    initCounts.cashflow > 0
+      ? "cashflow"
+      : initCounts.quality > 0
+        ? "quality"
+        : initCounts.etf > 0
+          ? "etf"
+          : "dividend";
+
   const state = {
     filters: initial.filters,
     sortKey: initial.sortKey,
     sortDir: initial.sortDir,
     colSet: validColSet,
+    filterTab: defaultTab,
     page: 1,
     pageSize: 25,
     tableExpanded: false,
@@ -134,33 +187,20 @@ export async function renderScreenerView(
   let searchInput = null;
   let sectorSelect = null;
   let minEtfsSelect = null;
-  let scopeButtons = new Map();
-  let etfButtons = new Map();
+  const scopeButtons = new Map();
+  const etfButtons = new Map();
   let etfModeWrap = null;
-  let etfModeButtons = new Map();
-  let presetButtons = new Map();
+  const etfModeButtons = new Map();
+  const presetButtons = new Map();
+  const filterTabButtons = new Map();
+  const filterTabPanes = new Map();
 
   // Dynamic slots
   const activeChipsSlot = el("div", { className: "screener-active-chips" });
   const kpiSlot = el("div", { className: "kpi-grid screener-kpi-grid" });
   const resultsCard = el("section", { className: "card" });
 
-  // Back row
-  root.appendChild(
-    el("div", { className: "back-row" }, [
-      el("a", {
-        href: "#/",
-        className: "back-link",
-        text: "← Back to Home",
-        onClick: (e) => {
-          e.preventDefault();
-          navigate("#/");
-        },
-      }),
-    ])
-  );
-
-  // Header + Presets card
+  // Compact Header + Presets card
   const presetStrip = el(
     "div",
     { className: "screener-presets" },
@@ -175,6 +215,7 @@ export async function renderScreenerView(
           state.sortKey = p.sortKey;
           state.sortDir = p.sortDir;
           state.colSet = p.colSet;
+          if (p.filterTab) state.filterTab = p.filterTab;
           state.page = 1;
           syncControlsFromState();
           refreshResults();
@@ -186,13 +227,13 @@ export async function renderScreenerView(
   );
 
   root.appendChild(
-    el("section", { className: "card" }, [
-      el("div", { className: "card-header compare-header-top" }, [
+    el("section", { className: "card screener-hero-card" }, [
+      el("div", { className: "card-header compare-header-top screener-hero-head" }, [
         el("div", {}, [
-          el("h1", { className: "page-title", text: "Cross-ETF Stock Screener" }),
+          el("h1", { className: "page-title", text: "Stock Screener" }),
           el("p", {
             className: "page-subtitle",
-            text: `Filter ${fmtInt(activeTotal)} active (${fmtInt(stocksList.length)} total tracked) securities across ${etfIds.length} ETFs using SEC XBRL fundamentals and dividend history.`,
+            text: `Screen ${fmtInt(activeTotal)} active (${fmtInt(stocksList.length)} tracked) U.S. stocks held across ${etfIds.length} covered ETFs using SEC XBRL fundamentals, cash flows, and dividend history.`,
           }),
         ]),
         el("a", {
@@ -205,16 +246,14 @@ export async function renderScreenerView(
           },
         }),
       ]),
-      el("div", { className: "card-body" }, [
-        el("div", { className: "screener-preset-row" }, [
-          el("span", { className: "compare-quick-label text-muted", text: "Strategy presets:" }),
-          presetStrip,
-        ]),
+      el("div", { className: "card-body screener-preset-bar" }, [
+        el("span", { className: "compare-quick-label text-muted", text: "Presets:" }),
+        presetStrip,
       ]),
     ])
   );
 
-  // Filter Panel card
+  // Compact Tabbed Filter Panel
   const filterBody = el("div", { className: "card-body screener-filter-body" });
   const toggleFiltersBtn = el("button", {
     type: "button",
@@ -240,7 +279,19 @@ export async function renderScreenerView(
     },
   });
 
-  // Row 1: Scope, ETF membership, Min ETFs, Sector
+  // Top compact row: Search + Universe + Sector
+  searchInput = el("input", {
+    type: "search",
+    className: "search-input screener-search-input",
+    placeholder: "Search ticker or company...",
+    ariaLabel: "Filter screener by ticker or company name",
+    onInput: (e) => {
+      state.filters.search = e.target.value;
+      state.page = 1;
+      refreshResults();
+    },
+  });
+
   const scopeOptions = [
     { id: "active", label: `Active (${fmtInt(activeTotal)})` },
     { id: "all", label: `All (${fmtInt(stocksList.length)})` },
@@ -266,69 +317,6 @@ export async function renderScreenerView(
     })
   );
 
-  const etfPills = el(
-    "div",
-    { className: "screener-etf-pills" },
-    etfIds.map((id) => {
-      const btn = el("button", {
-        type: "button",
-        className: "btn btn-sm",
-        text: id,
-        onClick: () => {
-          const idx = state.filters.etfs.indexOf(id);
-          if (idx >= 0) {
-            state.filters.etfs.splice(idx, 1);
-          } else {
-            state.filters.etfs.push(id);
-          }
-          state.page = 1;
-          syncControlsFromState();
-          refreshResults();
-        },
-      });
-      etfButtons.set(id, btn);
-      return btn;
-    })
-  );
-
-  etfModeWrap = el("div", { className: "screener-etf-mode" }, [
-    el("span", { className: "text-muted screener-mini-label", text: "Match:" }),
-    ...["any", "all"].map((m) => {
-      const btn = el("button", {
-        type: "button",
-        className: "btn btn-sm",
-        text: m === "any" ? "Any" : "All",
-        onClick: () => {
-          state.filters.etfMatchMode = m;
-          state.page = 1;
-          syncControlsFromState();
-          refreshResults();
-        },
-      });
-      etfModeButtons.set(m, btn);
-      return btn;
-    }),
-  ]);
-
-  minEtfsSelect = el(
-    "select",
-    {
-      className: "select-control screener-select",
-      ariaLabel: "Minimum ETFs holding stock",
-      onChange: (e) => {
-        state.filters.minEtfs = e.target.value;
-        state.page = 1;
-        refreshResults();
-      },
-    },
-    [
-      el("option", { value: "", text: "Any count" }),
-      ...Array.from({ length: Math.max(0, etfIds.length - 1) }, (_, idx) => idx + 2).map((n) =>
-        el("option", { value: String(n), text: n === etfIds.length ? `All ${n} ETFs` : `${n}+ ETFs` })
-      ),
-    ]
-  );
-
   sectorSelect = el(
     "select",
     {
@@ -343,77 +331,152 @@ export async function renderScreenerView(
     SECTOR_OPTIONS.map((opt) => el("option", { value: opt.value, text: opt.label }))
   );
 
-  searchInput = el("input", {
-    type: "search",
-    className: "search-input screener-search-input",
-    placeholder: "Filter ticker or company name...",
-    ariaLabel: "Filter screener by ticker or company name",
-    onInput: (e) => {
-      state.filters.search = e.target.value;
-      state.page = 1;
-      refreshResults();
-    },
-  });
-
-  const universeRow = el("div", { className: "screener-universe-row" }, [
-    el("div", { className: "screener-field-block" }, [
-      el("span", { className: "screener-field-label", text: "Universe" }),
-      scopeGroup,
-    ]),
-    el("div", { className: "screener-field-block" }, [
-      el("span", { className: "screener-field-label", text: "ETF Membership" }),
-      el("div", { className: "screener-etf-row" }, [etfPills, etfModeWrap]),
-    ]),
-    el("div", { className: "screener-field-block" }, [
-      el("label", { className: "screener-field-label", text: "Min ETFs" }),
-      minEtfsSelect,
-    ]),
-    el("div", { className: "screener-field-block" }, [
-      el("label", { className: "screener-field-label", text: "Sector Group" }),
-      sectorSelect,
-    ]),
-    el("div", { className: "screener-field-block screener-search-block" }, [
-      el("label", { className: "screener-field-label", text: "Search" }),
-      searchInput,
-    ]),
+  const quickBar = el("div", { className: "screener-quick-bar" }, [
+    el("div", { className: "screener-search-inline" }, [searchInput]),
+    scopeGroup,
+    sectorSelect,
   ]);
 
-  // Row 2: Numeric fundamental & dividend thresholds
-  const numericGrid = el(
+  // Filter Category Tabs bar
+  const categoryTabBar = el(
     "div",
-    { className: "screener-numeric-grid" },
-    NUMERIC_FILTER_FIELDS.map((field) => {
-      const inp = el("input", {
-        type: "number",
-        step: field.step,
-        className: "screener-num-input",
-        placeholder: field.placeholder,
-        ariaLabel: field.label,
-        onInput: (e) => {
-          state.filters[field.key] = e.target.value;
-          state.page = 1;
-          refreshResults();
+    { className: "screener-cat-tabs" },
+    FILTER_TABS.map((tab) => {
+      const btn = el("button", {
+        type: "button",
+        className: "screener-cat-tab",
+        text: tab.label,
+        onClick: () => {
+          state.filterTab = tab.id;
+          syncFilterTabs();
         },
       });
-      numericInputs.set(field.key, inp);
-      return el("div", { className: "screener-num-field" }, [
-        el("label", { className: "screener-field-label", text: field.label }),
-        el("div", { className: "screener-input-unit-wrap" }, [
-          inp,
-          el("span", { className: "screener-input-unit", text: field.unit }),
-        ]),
-      ]);
+      filterTabButtons.set(tab.id, btn);
+      return btn;
     })
   );
 
-  filterBody.appendChild(universeRow);
-  filterBody.appendChild(numericGrid);
+  // Build each category pane (kept mounted so typing never loses focus)
+  const panesWrap = el("div", { className: "screener-panes-wrap" });
+
+  for (const tab of FILTER_TABS) {
+    if (tab.id !== "etf") {
+      const pane = el(
+        "div",
+        { className: "screener-numeric-grid" },
+        tab.fields.map((field) => {
+          const inp = el("input", {
+            type: "number",
+            step: field.step,
+            className: "screener-num-input",
+            placeholder: field.placeholder,
+            ariaLabel: field.label,
+            onInput: (e) => {
+              state.filters[field.key] = e.target.value;
+              state.page = 1;
+              refreshResults();
+            },
+          });
+          numericInputs.set(field.key, inp);
+          return el("div", { className: "screener-num-field" }, [
+            el("label", { className: "screener-field-label", text: field.label }),
+            el("div", { className: "screener-input-unit-wrap" }, [
+              inp,
+              el("span", { className: "screener-input-unit", text: field.unit }),
+            ]),
+          ]);
+        })
+      );
+      filterTabPanes.set(tab.id, pane);
+      panesWrap.appendChild(pane);
+    } else {
+      const etfPills = el(
+        "div",
+        { className: "screener-etf-pills" },
+        etfIds.map((id) => {
+          const btn = el("button", {
+            type: "button",
+            className: "btn btn-sm",
+            text: id,
+            onClick: () => {
+              const idx = state.filters.etfs.indexOf(id);
+              if (idx >= 0) {
+                state.filters.etfs.splice(idx, 1);
+              } else {
+                state.filters.etfs.push(id);
+              }
+              state.page = 1;
+              syncControlsFromState();
+              refreshResults();
+            },
+          });
+          etfButtons.set(id, btn);
+          return btn;
+        })
+      );
+
+      etfModeWrap = el("div", { className: "screener-etf-mode" }, [
+        el("span", { className: "text-muted screener-mini-label", text: "Match:" }),
+        ...["any", "all"].map((m) => {
+          const btn = el("button", {
+            type: "button",
+            className: "btn btn-sm",
+            text: m === "any" ? "Any" : "All",
+            onClick: () => {
+              state.filters.etfMatchMode = m;
+              state.page = 1;
+              syncControlsFromState();
+              refreshResults();
+            },
+          });
+          etfModeButtons.set(m, btn);
+          return btn;
+        }),
+      ]);
+
+      minEtfsSelect = el(
+        "select",
+        {
+          className: "select-control screener-select",
+          ariaLabel: "Minimum ETFs holding stock",
+          onChange: (e) => {
+            state.filters.minEtfs = e.target.value;
+            state.page = 1;
+            refreshResults();
+          },
+        },
+        [
+          el("option", { value: "", text: "Any count" }),
+          ...Array.from({ length: Math.max(0, etfIds.length - 1) }, (_, idx) => idx + 2).map((n) =>
+            el("option", { value: String(n), text: n === etfIds.length ? `All ${n} ETFs` : `${n}+ ETFs` })
+          ),
+        ]
+      );
+
+      const etfPane = el("div", { className: "screener-etf-pane" }, [
+        el("div", { className: "screener-field-block" }, [
+          el("span", { className: "screener-field-label", text: "Held In ETFs" }),
+          el("div", { className: "screener-etf-row" }, [etfPills, etfModeWrap]),
+        ]),
+        el("div", { className: "screener-field-block" }, [
+          el("label", { className: "screener-field-label", text: "Min ETFs" }),
+          minEtfsSelect,
+        ]),
+      ]);
+      filterTabPanes.set("etf", etfPane);
+      panesWrap.appendChild(etfPane);
+    }
+  }
+
+  filterBody.appendChild(quickBar);
+  filterBody.appendChild(categoryTabBar);
+  filterBody.appendChild(panesWrap);
   filterBody.appendChild(activeChipsSlot);
 
   root.appendChild(
     el("section", { className: "card" }, [
-      el("div", { className: "card-header compare-table-header" }, [
-        el("h2", { className: "card-title", text: "Screening Criteria" }),
+      el("div", { className: "card-header compare-table-header screener-criteria-head" }, [
+        el("h2", { className: "card-title", text: "Filters" }),
         el("div", { className: "toolbar-group" }, [resetBtn, toggleFiltersBtn]),
       ]),
       filterBody,
@@ -422,6 +485,24 @@ export async function renderScreenerView(
 
   root.appendChild(kpiSlot);
   root.appendChild(resultsCard);
+
+  function syncFilterTabs() {
+    const counts = countCategoryFilters(state.filters);
+    for (const tab of FILTER_TABS) {
+      const btn = filterTabButtons.get(tab.id);
+      const pane = filterTabPanes.get(tab.id);
+      const isActive = state.filterTab === tab.id;
+      const cnt = counts[tab.id] || 0;
+      if (btn) {
+        btn.classList.toggle("active", isActive);
+        btn.classList.toggle("has-filters", cnt > 0);
+        btn.textContent = cnt > 0 ? `${tab.label} (${cnt})` : tab.label;
+      }
+      if (pane) {
+        pane.classList.toggle("hidden", !isActive);
+      }
+    }
+  }
 
   function syncControlsFromState() {
     const f = state.filters;
@@ -446,6 +527,7 @@ export async function renderScreenerView(
         inp.value = String(targetVal);
       }
     }
+    syncFilterTabs();
   }
 
   function updatePresetHighlight() {
@@ -464,7 +546,7 @@ export async function renderScreenerView(
     }
     activeChipsSlot.classList.remove("hidden");
     activeChipsSlot.appendChild(
-      el("span", { className: "screener-mini-label text-muted", text: "Active filters:" })
+      el("span", { className: "screener-mini-label text-muted", text: "Active:" })
     );
     for (const chip of chips) {
       activeChipsSlot.appendChild(
@@ -501,25 +583,25 @@ export async function renderScreenerView(
 
     const cards = [
       {
-        label: "Matched Securities",
+        label: "Matched Stocks",
         value: fmtInt(summary.count),
-        sub: `${fmtPct(share, 1)} of ${fmtInt(denom)} in current scope`,
+        sub: `${fmtPct(share, 1)} of ${fmtInt(denom)} in scope`,
         accent: true,
       },
       {
         label: "Median TTM Yield",
         value: fmtPct(summary.medianYield, 2),
-        sub: `${fmtInt(summary.dividendPayerCount)} dividend payers in results`,
+        sub: `${fmtInt(summary.dividendPayerCount)} dividend payers`,
       },
       {
-        label: "Median Div Streak",
-        value: summary.medianStreak !== null ? `${summary.medianStreak.toFixed(0)} yrs` : "—",
-        sub: "Among dividend-paying matches",
+        label: "Median 5Y FCF CAGR",
+        value: fmtPct(summary.medianFcfCagr5y, 1, true),
+        sub: "Excl. banks & insurers",
       },
       {
-        label: "Median P/E · ROIC",
-        value: `${fmtMultiple(summary.medianPe)} · ${fmtPct(summary.medianRoic, 1)}`,
-        sub: "Split-adjusted SEC XBRL TTM / FY",
+        label: "Median 5Y ROE · P/E",
+        value: `${fmtPct(summary.medianRoe5y, 1)} · ${fmtMultiple(summary.medianPe)}`,
+        sub: `Median ROIC ${fmtPct(summary.medianRoic, 1)}`,
       },
     ];
 
@@ -541,7 +623,7 @@ export async function renderScreenerView(
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `etf-xray-screener-${state.colSet.toLowerCase()}.csv`;
+    a.download = `etf-xray-screener-${state.colSet.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -558,7 +640,6 @@ export async function renderScreenerView(
     const endIdx = Math.min(sorted.length, startIdx + state.pageSize);
     const pageRows = sorted.slice(startIdx, endIdx);
 
-    // Header: Column View Tabs + Page Size + CSV + Expand toggle
     const colTabs = el(
       "div",
       { className: "tab-bar" },
@@ -716,6 +797,8 @@ export async function renderScreenerView(
               let cls = "num";
               if (col.key === "share_change_5y" && val !== null && val !== undefined) {
                 cls += val < 0 ? " pos-val" : val > 0.05 ? " neg-val" : "";
+              } else if (col.key === "fcf_cagr_5y" && val !== null && val !== undefined) {
+                cls += val > 0 ? " pos-val" : val < 0 ? " neg-val" : "";
               }
               return el("td", { className: cls, text: col.fmt(val, row) });
             }),
@@ -763,6 +846,7 @@ export async function renderScreenerView(
     const filtered = filterStocks(stocksList, state.filters);
     const sorted = sortStocks(filtered, state.sortKey, state.sortDir);
     lastMatchedRows = sorted;
+    syncFilterTabs();
     updatePresetHighlight();
     renderActiveChips();
     renderSummaryKpis(sorted);

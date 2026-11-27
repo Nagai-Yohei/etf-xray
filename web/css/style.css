@@ -1669,12 +1669,28 @@ a:hover {
   }
 }
 
-/* Cross-ETF Stock Screener (#/screener) */
-.screener-preset-row {
+/* Stock Screener (#/screener) */
+.screener-hero-card {
+  margin-bottom: 14px;
+}
+
+.screener-hero-head {
+  padding-top: 14px;
+  padding-bottom: 12px;
+}
+
+.screener-hero-head .page-title {
+  font-size: 22px;
+  margin-bottom: 2px;
+}
+
+.screener-preset-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
 .screener-presets {
@@ -1684,13 +1700,70 @@ a:hover {
   flex-wrap: wrap;
 }
 
+.screener-criteria-head {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
 .screener-filter-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
-.screener-universe-row {
+.screener-quick-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.screener-search-inline {
+  flex: 1 1 220px;
+  max-width: 300px;
+  min-width: 180px;
+}
+
+.screener-cat-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.screener-cat-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.screener-cat-tab:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.screener-cat-tab.has-filters {
+  color: var(--accent);
+}
+
+.screener-cat-tab.active {
+  background: var(--accent-soft);
+  border-color: #bfdbfe;
+  color: var(--accent);
+}
+
+.screener-etf-pane {
   display: flex;
   align-items: flex-end;
   gap: 14px;
@@ -1743,11 +1816,6 @@ a:hover {
   font-size: 12px;
 }
 
-.screener-search-block {
-  flex: 1 1 220px;
-  min-width: 190px;
-}
-
 .screener-search-input {
   height: 32px;
   font-size: 12px;
@@ -1755,10 +1823,8 @@ a:hover {
 
 .screener-numeric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
-  gap: 10px 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 12px;
 }
 
 .screener-num-field {

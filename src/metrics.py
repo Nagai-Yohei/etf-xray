@@ -606,6 +606,43 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             v5, span5 = _find_value_n_years_ago(rev_series, le, 5)
             rev_cagr_5y = _calc_cagr(v5, lv, span5)
 
+        # 5-year median ROE (requires >= 3 valid years with positive equity; skips extreme near-zero-equity distortions)
+        roe_5y_median = None
+        if ann_rows:
+            roe_vals: list[float] = []
+            for r in ann_rows[-5:]:
+                if r["net_income"] is not None and r["total_equity"] is not None and float(r["total_equity"]) > 0:
+                    r_val = float(r["net_income"]) / float(r["total_equity"])
+                    if abs(r_val) <= 5.0:
+                        roe_vals.append(r_val)
+            if len(roe_vals) >= 3:
+                roe_5y_median = float(statistics.median(roe_vals))
+
+        # 5-year FCF CAGR & consecutive positive FCF years (omitted for banks/insurers)
+        sector_group_cf = sector_by_sec.get(sec_id)
+        fcf_cagr_5y = None
+        fcf_positive_years: int | None = None
+        if ann_rows and sector_group_cf not in ("bank", "insurance"):
+            fcf_series = [
+                (str(r["fy_end"]), float(r["fcf"]))
+                for r in ann_rows
+                if r["fcf"] is not None
+            ]
+            if fcf_series:
+                le_f, lv_f = fcf_series[-1]
+                if lv_f > 0:
+                    v5_f, span5_f = _find_value_n_years_ago(fcf_series, le_f, 5)
+                    if v5_f is not None and v5_f > 0 and span5_f >= 3:
+                        fcf_cagr_5y = _calc_cagr(v5_f, lv_f, span5_f)
+                # Consecutive positive FCF years walking backward from latest annual row
+                streak = 0
+                for _, fv in reversed(fcf_series):
+                    if fv > 0:
+                        streak += 1
+                    else:
+                        break
+                fcf_positive_years = streak
+
         if not ann_rows:
             if sec_id.endswith(".OLD"):
                 notes.append(
@@ -630,10 +667,13 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                 round(gross_margin, 6) if gross_margin is not None else None,
                 round(op_margin, 6) if op_margin is not None else None,
                 round(roe, 6) if roe is not None else None,
+                round(roe_5y_median, 6) if roe_5y_median is not None else None,
                 round(roic, 6) if roic is not None else None,
                 round(equity_ratio, 6) if equity_ratio is not None else None,
                 round(fcf_margin, 6) if fcf_margin is not None else None,
                 round(fcf_ex_sbc_margin, 6) if fcf_ex_sbc_margin is not None else None,
+                round(fcf_cagr_5y, 6) if fcf_cagr_5y is not None else None,
+                fcf_positive_years,
                 round(net_debt_to_fcf, 4) if net_debt_to_fcf is not None else None,
                 round(interest_coverage, 4) if interest_coverage is not None else None,
                 round(current_ratio, 4) if current_ratio is not None else None,
@@ -649,11 +689,11 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
         INSERT INTO stock_metrics (
             security_id, latest_price_date, latest_price, ttm_yield,
             payout_ratio_eps, payout_ratio_fcf, div_streak_years, div_streak_open,
-            div_cagr_5y, div_cagr_10y, rev_cagr_5y, gross_margin, op_margin, roe, roic,
-            equity_ratio, fcf_margin, fcf_ex_sbc_margin, net_debt_to_fcf,
+            div_cagr_5y, div_cagr_10y, rev_cagr_5y, gross_margin, op_margin, roe, roe_5y_median, roic,
+            equity_ratio, fcf_margin, fcf_ex_sbc_margin, fcf_cagr_5y, fcf_positive_years, net_debt_to_fcf,
             interest_coverage, current_ratio, share_change_5y,
             pe_ratio, pb_ratio, data_notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         records_to_insert,
     )

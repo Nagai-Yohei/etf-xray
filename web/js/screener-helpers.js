@@ -1,5 +1,5 @@
 /**
- * Pure filtering, sorting, summary, URL-state, and CSV helpers for the Cross-ETF Stock Screener.
+ * Pure filtering, sorting, summary, URL-state, and CSV helpers for the Stock Screener.
  * Zero DOM dependencies so it can be unit-tested cleanly in headless JS runtimes.
  */
 
@@ -36,18 +36,33 @@ export const DEFAULT_FILTERS = Object.freeze({
   minEtfs: "",
   sector: "",
   search: "",
+  // Dividend
   minYield: "", // percentage points, e.g. "3.0" -> 0.03
   maxYield: "",
   minStreak: "", // years
   minDivCagr5y: "", // percentage points
   maxPayoutEps: "", // percentage points
   maxPayoutFcf: "", // percentage points
-  maxPe: "", // multiple
+  // Cash Flow & ROE
+  minFcfCagr5y: "", // percentage points
+  minFcfMargin: "", // percentage points
+  minFcfStreak: "", // consecutive positive FCF years
+  minRoe: "", // percentage points
+  minRoe5y: "", // 5-year median ROE percentage points
+  // Quality & Valuation
   minRoic: "", // percentage points
   minOpMargin: "", // percentage points
   minRevCagr5y: "", // percentage points
+  maxPe: "", // multiple
   maxShareChange5y: "", // percentage points (negative = buybacks)
 });
+
+export const FILTER_CATEGORY_KEYS = {
+  dividend: ["minYield", "maxYield", "minStreak", "minDivCagr5y", "maxPayoutEps", "maxPayoutFcf"],
+  cashflow: ["minFcfCagr5y", "minFcfMargin", "minFcfStreak", "minRoe", "minRoe5y"],
+  quality: ["minRoic", "minOpMargin", "minRevCagr5y", "maxPe", "maxShareChange5y"],
+  etf: ["etfs", "minEtfs"],
+};
 
 export const SCREENER_PRESETS = [
   {
@@ -58,6 +73,17 @@ export const SCREENER_PRESETS = [
     sortKey: "etf_count",
     sortDir: -1,
     colSet: "Overview",
+    filterTab: "dividend",
+  },
+  {
+    id: "cashflow_roe",
+    label: "FCF & ROE Compounders",
+    description: "5Y FCF CAGR ≥ 8%, FCF Margin ≥ 10%, 5+ yrs positive FCF, 5Y Med ROE ≥ 15%",
+    filters: { scope: "active", minFcfCagr5y: "8", minFcfMargin: "10", minFcfStreak: "5", minRoe5y: "15" },
+    sortKey: "fcf_cagr_5y",
+    sortDir: -1,
+    colSet: "Cash Flow & ROE",
+    filterTab: "cashflow",
   },
   {
     id: "aristocrat_style",
@@ -67,6 +93,7 @@ export const SCREENER_PRESETS = [
     sortKey: "div_streak_years",
     sortDir: -1,
     colSet: "Dividend",
+    filterTab: "dividend",
   },
   {
     id: "high_yield_covered",
@@ -76,6 +103,7 @@ export const SCREENER_PRESETS = [
     sortKey: "ttm_yield",
     sortDir: -1,
     colSet: "Dividend",
+    filterTab: "dividend",
   },
   {
     id: "div_growth",
@@ -85,6 +113,7 @@ export const SCREENER_PRESETS = [
     sortKey: "div_cagr_5y",
     sortDir: -1,
     colSet: "Dividend",
+    filterTab: "dividend",
   },
   {
     id: "quality_compounders",
@@ -94,6 +123,7 @@ export const SCREENER_PRESETS = [
     sortKey: "roic",
     sortDir: -1,
     colSet: "Fundamentals",
+    filterTab: "quality",
   },
   {
     id: "buyback_champions",
@@ -103,15 +133,17 @@ export const SCREENER_PRESETS = [
     sortKey: "share_change_5y",
     sortDir: 1,
     colSet: "Fundamentals",
+    filterTab: "quality",
   },
   {
     id: "multi_etf_core",
-    label: "Multi-ETF Core (3+)",
-    description: "Currently held simultaneously across 3 or more covered ETFs",
-    filters: { scope: "active", minEtfs: "3" },
+    label: "Multi-ETF Core (4+)",
+    description: "Currently held simultaneously across 4 or more covered ETFs",
+    filters: { scope: "active", minEtfs: "4" },
     sortKey: "etf_count",
     sortDir: -1,
     colSet: "Overview",
+    filterTab: "etf",
   },
 ];
 
@@ -136,6 +168,23 @@ export function sectorLabel(sectorGroup) {
   return SECTOR_GROUP_LABELS[sectorGroup] || sectorGroup;
 }
 
+export function countCategoryFilters(filters) {
+  const f = filters || DEFAULT_FILTERS;
+  const counts = {};
+  for (const [cat, keys] of Object.entries(FILTER_CATEGORY_KEYS)) {
+    let n = 0;
+    for (const k of keys) {
+      if (k === "etfs") {
+        if (Array.isArray(f.etfs) && f.etfs.length > 0) n += 1;
+      } else if (String(f[k] ?? "").trim() !== "") {
+        n += 1;
+      }
+    }
+    counts[cat] = n;
+  }
+  return counts;
+}
+
 export function filterStocks(stocksList, filters) {
   const f = filters || DEFAULT_FILTERS;
   const q = String(f.search || "").trim().toLowerCase();
@@ -147,6 +196,11 @@ export function filterStocks(stocksList, filters) {
   const minDivCagr5y = parseOptionalNumber(f.minDivCagr5y);
   const maxPayoutEps = parseOptionalNumber(f.maxPayoutEps);
   const maxPayoutFcf = parseOptionalNumber(f.maxPayoutFcf);
+  const minFcfCagr5y = parseOptionalNumber(f.minFcfCagr5y);
+  const minFcfMargin = parseOptionalNumber(f.minFcfMargin);
+  const minFcfStreak = parseOptionalNumber(f.minFcfStreak);
+  const minRoe = parseOptionalNumber(f.minRoe);
+  const minRoe5y = parseOptionalNumber(f.minRoe5y);
   const maxPe = parseOptionalNumber(f.maxPe);
   const minRoic = parseOptionalNumber(f.minRoic);
   const minOpMargin = parseOptionalNumber(f.minOpMargin);
@@ -194,7 +248,7 @@ export function filterStocks(stocksList, filters) {
       if (!tk.includes(q) && !nm.includes(q)) continue;
     }
 
-    // 6. Numeric fundamental / dividend thresholds
+    // 6. Dividend thresholds
     if (minYield !== null && (s.ttm_yield === null || s.ttm_yield === undefined || s.ttm_yield * 100 < minYield)) {
       continue;
     }
@@ -213,6 +267,25 @@ export function filterStocks(stocksList, filters) {
     if (maxPayoutFcf !== null && (s.payout_ratio_fcf === null || s.payout_ratio_fcf === undefined || s.payout_ratio_fcf * 100 > maxPayoutFcf)) {
       continue;
     }
+
+    // 7. Cash Flow & ROE thresholds
+    if (minFcfCagr5y !== null && (s.fcf_cagr_5y === null || s.fcf_cagr_5y === undefined || s.fcf_cagr_5y * 100 < minFcfCagr5y)) {
+      continue;
+    }
+    if (minFcfMargin !== null && (s.fcf_margin === null || s.fcf_margin === undefined || s.fcf_margin * 100 < minFcfMargin)) {
+      continue;
+    }
+    if (minFcfStreak !== null && (s.fcf_positive_years === null || s.fcf_positive_years === undefined || s.fcf_positive_years < minFcfStreak)) {
+      continue;
+    }
+    if (minRoe !== null && (s.roe === null || s.roe === undefined || s.roe * 100 < minRoe)) {
+      continue;
+    }
+    if (minRoe5y !== null && (s.roe_5y_median === null || s.roe_5y_median === undefined || s.roe_5y_median * 100 < minRoe5y)) {
+      continue;
+    }
+
+    // 8. Quality & Valuation thresholds
     if (maxPe !== null && (s.pe_ratio === null || s.pe_ratio === undefined || s.pe_ratio <= 0 || s.pe_ratio > maxPe)) {
       continue;
     }
@@ -282,7 +355,8 @@ export function computeScreenerSummary(rows) {
     count: rows.length,
     dividendPayerCount: dividendPayers.length,
     medianYield: medianOf(dividendPayers.map((r) => r.ttm_yield)),
-    medianStreak: medianOf(rows.filter((r) => (r.div_streak_years || 0) > 0).map((r) => r.div_streak_years)),
+    medianFcfCagr5y: medianOf(rows.map((r) => r.fcf_cagr_5y)),
+    medianRoe5y: medianOf(rows.map((r) => r.roe_5y_median)),
     medianPe: medianOf(rows.filter((r) => r.pe_ratio !== null && r.pe_ratio > 0).map((r) => r.pe_ratio)),
     medianRoic: medianOf(rows.map((r) => r.roic)),
   };
@@ -332,10 +406,15 @@ export function describeActiveFilters(filters) {
   }
   if (filters.minYield) chips.push({ key: "minYield", label: `Yield ≥ ${filters.minYield}%` });
   if (filters.maxYield) chips.push({ key: "maxYield", label: `Yield ≤ ${filters.maxYield}%` });
-  if (filters.minStreak) chips.push({ key: "minStreak", label: `Streak ≥ ${filters.minStreak}Y` });
+  if (filters.minStreak) chips.push({ key: "minStreak", label: `Div Streak ≥ ${filters.minStreak}Y` });
   if (filters.minDivCagr5y) chips.push({ key: "minDivCagr5y", label: `5Y Div CAGR ≥ ${filters.minDivCagr5y}%` });
   if (filters.maxPayoutEps) chips.push({ key: "maxPayoutEps", label: `EPS Payout ≤ ${filters.maxPayoutEps}%` });
   if (filters.maxPayoutFcf) chips.push({ key: "maxPayoutFcf", label: `FCF Payout ≤ ${filters.maxPayoutFcf}%` });
+  if (filters.minFcfCagr5y) chips.push({ key: "minFcfCagr5y", label: `5Y FCF CAGR ≥ ${filters.minFcfCagr5y}%` });
+  if (filters.minFcfMargin) chips.push({ key: "minFcfMargin", label: `FCF Margin ≥ ${filters.minFcfMargin}%` });
+  if (filters.minFcfStreak) chips.push({ key: "minFcfStreak", label: `FCF +Yrs ≥ ${filters.minFcfStreak}Y` });
+  if (filters.minRoe) chips.push({ key: "minRoe", label: `ROE ≥ ${filters.minRoe}%` });
+  if (filters.minRoe5y) chips.push({ key: "minRoe5y", label: `5Y Med ROE ≥ ${filters.minRoe5y}%` });
   if (filters.maxPe) chips.push({ key: "maxPe", label: `P/E ≤ ${filters.maxPe}x` });
   if (filters.minRoic) chips.push({ key: "minRoic", label: `ROIC ≥ ${filters.minRoic}%` });
   if (filters.minOpMargin) chips.push({ key: "minOpMargin", label: `Op Margin ≥ ${filters.minOpMargin}%` });
@@ -356,6 +435,11 @@ const QUERY_PARAM_KEYS = [
   "minDivCagr5y",
   "maxPayoutEps",
   "maxPayoutFcf",
+  "minFcfCagr5y",
+  "minFcfMargin",
+  "minFcfStreak",
+  "minRoe",
+  "minRoe5y",
   "maxPe",
   "minRoic",
   "minOpMargin",
