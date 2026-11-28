@@ -10,6 +10,7 @@ Live site: https://etf-xray.pages.dev
 - VIG — Vanguard Dividend Appreciation ETF (2011-01 – present)
 - DGRO — iShares Core Dividend Growth ETF (2014-07 – present)
 - VOO — Vanguard S&P 500 ETF (2011-03 – present)
+- VTI — Vanguard Total Stock Market ETF (2019-09 – present; quarterly `N-PORT-P`)
 - SCHD — Schwab U.S. Dividend Equity ETF (2011-11 – present)
 - HDV — iShares Core High Dividend ETF (2011-04 – present)
 - SDY — SPDR S&P Dividend ETF (2011-03 – present)

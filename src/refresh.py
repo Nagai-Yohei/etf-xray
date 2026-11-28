@@ -706,7 +706,7 @@ def update_sic_incremental(
         return 0
 
     updated = 0
-    for cik in ciks:
+    for idx, cik in enumerate(ciks, start=1):
         try:
             sub = client.get_submissions(cik, offline_only=offline_only)
         except RuntimeError as exc:
@@ -728,6 +728,9 @@ def update_sic_incremental(
                 (sic, sic_desc, group, cik),
             )
             updated += 1
+        if idx % 200 == 0 or idx == len(ciks):
+            conn.commit()
+            print(f"  Incremental SIC progress: {idx}/{len(ciks)} (updated={updated})", flush=True)
 
     conn.commit()
     return updated

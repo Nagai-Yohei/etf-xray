@@ -13,6 +13,10 @@ async function fetchJson(path) {
     if (!res.ok) {
       throw new Error(`Failed to load ${path} (HTTP ${res.status})`);
     }
+    const ct = res.headers?.get?.("content-type") || "";
+    if (ct.includes("text/html")) {
+      throw new Error("Site data was updated — please reload the page.");
+    }
     return res.json();
   });
   jsonCache.set(path, promise);

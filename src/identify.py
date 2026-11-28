@@ -464,6 +464,21 @@ def resolve_all_filings(
         resolved_rows: list[ResolvedHolding] = []
         total_val = filing.total_value_usd
 
+        # For N-PORT-P filings, pre-collect tickers claimed by high-confidence CUSIP/ISIN matches
+        # so secondary warrant/right/CVR rows with the same company name never collide on name fallback.
+        claimed_by_id: set[str] = set()
+        if filing.source == "NPORT-P":
+            for h in filing.holdings:
+                t_id: str | None = None
+                if h.cusip and h.cusip in manual_cusip:
+                    t_id = manual_cusip[h.cusip]
+                elif h.isin and h.isin in manual_cusip:
+                    t_id = manual_cusip[h.isin]
+                elif h.cusip or h.isin:
+                    t_id = figi.lookup(h.cusip, h.isin)
+                if t_id:
+                    claimed_by_id.add(t_id)
+
         for rank, h in enumerate(filing.holdings, start=1):
             ticker: str | None = None
             source = "unresolved"
@@ -579,6 +594,18 @@ def resolve_all_filings(
                             break
                     if ticker is not None:
                         break
+
+            # Guard N-PORT-P name-based fallbacks against colliding with a common-stock ticker
+            # already claimed in the same filing (e.g. secondary warrants, rights, CVRs, earnouts).
+            if (
+                filing.source == "NPORT-P"
+                and ticker is not None
+                and source not in ("manual_cusip", "openfigi")
+                and (ticker in claimed_by_id or ticker in seen_ids)
+            ):
+                ticker = None
+                cik = None
+                source = "unresolved"
 
             # Resolve CIK:
             # 1) Never attach common-stock CIK to warrants/preferreds/rights or .OLD legacy entities

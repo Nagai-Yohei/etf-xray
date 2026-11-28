@@ -152,5 +152,19 @@
     "legacy_adapter": "spdr_series_legacy",
     "legacy_fund_title": "S&P Dividend ETF",
     "active": true
+  },
+  {
+    "etf_id": "VTI",
+    "name": "Vanguard Total Stock Market ETF",
+    "issuer": "Vanguard",
+    "cik": "0000036405",
+    "series_id": "S000002848",
+    "series_name_patterns": [
+      "S000002848"
+    ],
+    "structure": "open_end",
+    "fiscal_year_end_month": 12,
+    "legacy_adapter": null,
+    "active": true
   }
 ]

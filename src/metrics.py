@@ -7,11 +7,13 @@ AGENTS.md rules:
 
 from __future__ import annotations
 
+import gzip
 import json
 import sqlite3
 import statistics
 from collections import defaultdict
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from src.env import RAW_DIR
@@ -50,6 +52,23 @@ def _calc_cagr(start_val: float | None, end_val: float | None, years: int) -> fl
     if start_val <= 0 or end_val <= 0:
         return None
     return (end_val / start_val) ** (1.0 / years) - 1.0
+
+
+def _load_cached_company_facts(raw_cf_dir: Path, cik: str) -> dict[str, Any] | None:
+    """Load cached SEC CompanyFacts JSON from either .json.gz or legacy .json."""
+    gz_path = raw_cf_dir / f"CIK{cik}.json.gz"
+    if gz_path.is_file():
+        try:
+            return json.loads(gzip.decompress(gz_path.read_bytes()).decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+    json_path = raw_cf_dir / f"CIK{cik}.json"
+    if json_path.is_file():
+        try:
+            return json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+    return None
 
 
 def rebuild_quarter_prices(conn: sqlite3.Connection) -> int:
@@ -288,14 +307,12 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             sec_cik = cik_by_sec.get(sec_id)
             if sec_cik:
                 chain = get_cik_chain(sec_id, sec_cik, cik_overrides)
+                raw_cf_dir = RAW_DIR / "edgar" / "companyfacts"
                 cf_payloads = []
                 for c in chain:
-                    cf_path = RAW_DIR / "edgar" / "companyfacts" / f"CIK{c}.json"
-                    if cf_path.is_file():
-                        try:
-                            cf_payloads.append(json.loads(cf_path.read_text(encoding="utf-8")))
-                        except Exception:
-                            pass
+                    payload = _load_cached_company_facts(raw_cf_dir, c)
+                    if payload is not None:
+                        cf_payloads.append(payload)
                 if cf_payloads:
                     _, sp_events = extract_annual_financials(merge_company_facts(cf_payloads))
                     post_price_factor = 1.0
@@ -328,6 +345,11 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             )
             else None
         )
+        if ttm_yield is not None and ttm_yield > 1.0:
+            ttm_yield = None
+            notes.append(
+                "Dividend yield omitted (exceeds 100%, likely special/liquidating distribution or split timing)"
+            )
         pe_ratio = (
             (ratio_price / eps_ttm)
             if (
@@ -441,7 +463,9 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             if rev is not None and float(rev) > 0:
                 rev_f = float(rev)
                 if latest_ann["gross_profit"] is not None:
-                    gross_margin = float(latest_ann["gross_profit"]) / rev_f
+                    gm_raw = float(latest_ann["gross_profit"]) / rev_f
+                    if -2.0 <= gm_raw <= 1.05:
+                        gross_margin = gm_raw
                 if latest_ann["operating_income"] is not None:
                     op_margin = float(latest_ann["operating_income"]) / rev_f
                 if latest_ann["fcf"] is not None:
@@ -734,12 +758,9 @@ def compute_etf_dividend_history(
         if cik_chain not in splits_by_chain:
             payloads: list[dict[str, Any]] = []
             for c in cik_chain:
-                p = raw_cf_dir / f"CIK{c}.json"
-                if p.is_file():
-                    try:
-                        payloads.append(json.loads(p.read_text(encoding="utf-8")))
-                    except Exception:  # noqa: BLE001
-                        continue
+                payload = _load_cached_company_facts(raw_cf_dir, c)
+                if payload is not None:
+                    payloads.append(payload)
             if payloads:
                 try:
                     _, sp = extract_annual_financials(merge_company_facts(payloads))

@@ -24,9 +24,14 @@ from src.xbrl.tags import (
 
 def _snap_split_ratio(ratio: float) -> float:
     """Snap an empirical split ratio to the exact theoretical ratio when sufficiently close."""
+    if ratio <= 0:
+        return 1.0
     for known in KNOWN_SPLIT_RATIOS:
         if abs(ratio / known - 1.0) <= 0.025:
             return known
+    if ratio < 0.01:
+        # Preserve significant digits on extreme reverse splits so ratio never rounds to 0.0
+        return float(f"{ratio:.4g}")
     return round(ratio, 4)
 
 
@@ -393,6 +398,6 @@ def _cumulative_split_factor(filed: str | None, split_events: list[tuple[str, fl
         return 1.0
     factor = 1.0
     for effective_filed, ratio in split_events:
-        if filed < effective_filed:
+        if filed < effective_filed and ratio > 0:
             factor *= ratio
-    return factor
+    return factor if factor > 0 else 1.0

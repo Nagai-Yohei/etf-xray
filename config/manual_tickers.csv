@@ -581,3 +581,69 @@ Ferguson PLC,,FERG,Redomiciled as Ferguson Enterprises Inc (FERG) in 2024
 "Halyard Health, Inc.",,HYH,Spun off from Kimberly-Clark in 2014 (later Avanos Medical)
 "Quality Care Properties, Inc.",,QCP,Spun off from HCP in 2016; acquired by Welltower in 2018
 ChampionX Corp,15872M104,CHX,Spun off from Ecolab in 2020; acquired by SLB in 2025
+Helix Energy Solutions Group Inc,42330P107,HLX,CUSIP override for Helix Energy Solutions (avoid HOS collision)
+Hornbeck Offshore Services Inc,440543106,HOS,CUSIP override for Hornbeck Offshore Services
+Paramount Global Class A,92556H107,PARAA,Dual-class share disambiguation (Class A)
+Paramount Global Class B,92556H206,PARA,Dual-class share disambiguation (Class B)
+Urban One Inc Class A,91705J105,UONE,Dual-class share disambiguation (Class A)
+Urban One Inc Class D,91705J204,UONEK,Dual-class share disambiguation (Class D)
+Star Equity Holdings Inc,85513Q103,STRR.OLD,Pre-merger Star Equity Holdings before Hudson Global combination
+Star Equity Holdings Inc,85513Q301,STRR.OLD,Pre-merger Star Equity Holdings post-split CUSIP
+Roku Inc,77543R102,ROKU,VTI 2026-06-30 CUSIP override
+Chart Industries Inc,16115Q308,GTLS,VTI 2026-06-30 CUSIP override
+TopBuild Corp,89055F103,BLD,VTI 2026-06-30 CUSIP override
+Apogee Therapeutics Inc,03770N101,APGE,VTI 2026-06-30 CUSIP override
+Arcosa Inc,039653100,ACA,VTI 2026-06-30 CUSIP override
+Nuvalent Inc,670703107,NUVL,VTI 2026-06-30 CUSIP override
+Taylor Morrison Home Corp,87724P106,TMHC,VTI 2026-06-30 CUSIP override
+Liberty Broadband Corp Class C,530307305,LBRDK,Dual-class share disambiguation (Class C)
+Liberty Broadband Corp Class A,530307107,LBRDA,Dual-class share disambiguation (Class A)
+Crinetics Pharmaceuticals Inc,22663K107,CRNX,VTI 2026-06-30 CUSIP override
+Catalyst Pharmaceuticals Inc,14888U101,CPRX,VTI 2026-06-30 CUSIP override
+National Storage Affiliates Trust,637870106,NSA,VTI 2026-06-30 CUSIP override
+LXP Industrial Trust,529043408,LXP,VTI 2026-06-30 CUSIP override
+Supernus Pharmaceuticals Inc,868459108,SUPN.OLD,Pre-merger Supernus Pharmaceuticals (avoid Indivior/SUPN collision)
+LiveRamp Holdings Inc,53815P108,RAMP,VTI 2026-06-30 CUSIP override
+Stellar Bancorp Inc,858927106,STEL,VTI 2026-06-30 CUSIP override
+Sila Realty Trust Inc,146280508,SILA,VTI 2026-06-30 CUSIP override
+CBIZ Inc,124805102,CBZ,VTI 2026-06-30 CUSIP override
+AtaiBeckley Inc,04650F101,ATAI,VTI 2026-06-30 CUSIP override
+Global Business Travel Group Inc,37890B100,GBTG,VTI 2026-06-30 CUSIP override
+Apollo Commercial Real Estate Finance Inc,03762U105,ARI,VTI 2026-06-30 CUSIP override
+BioLife Solutions Inc,09062W204,BLFS,VTI 2026-06-30 CUSIP override
+SkyWater Technology Inc,83089J108,SKYT,VTI 2026-06-30 CUSIP override
+ACV Auctions Inc,00091G104,ACVA,VTI 2026-06-30 CUSIP override
+Avanos Medical Inc,05350V106,AVNS,VTI 2026-06-30 CUSIP override
+Whitestone REIT,966084204,WSR,VTI 2026-06-30 CUSIP override
+Esperion Therapeutics Inc,29664W105,ESPR,VTI 2026-06-30 CUSIP override
+Talkspace Inc,87427V103,TALK,VTI 2026-06-30 CUSIP override
+Theravance Biopharma Inc,G8807B106,TBPH,VTI 2026-06-30 CUSIP override
+Beazer Homes USA Inc,07556Q881,BZH,VTI 2026-06-30 CUSIP override
+Clear Channel Outdoor Holdings Inc,18453H106,CCO,VTI 2026-06-30 CUSIP override
+Northfield Bancorp Inc,66611T108,NFBK,VTI 2026-06-30 CUSIP override
+XOMA Royalty Corp,98419J206,XOMA,VTI 2026-06-30 CUSIP override
+Forte Biosciences Inc,34962G208,FBRX,VTI 2026-06-30 CUSIP override
+Bowman Consulting Group Ltd,103002101,BWMN,VTI 2026-06-30 CUSIP override
+Weave Communications Inc,94724R108,WEAV,VTI 2026-06-30 CUSIP override
+Cross Country Healthcare Inc,227483104,CCRN,VTI 2026-06-30 CUSIP override
+TruBridge Inc,205306103,TBRG,VTI 2026-06-30 CUSIP override
+Simulations Plus Inc,829214105,SLP,VTI 2026-06-30 CUSIP override
+Open Lending Corp,68373J104,LPRO,VTI 2026-06-30 CUSIP override
+Nathan's Famous Inc,632347100,NATH,VTI 2026-06-30 CUSIP override
+Alight Inc,01626W101,ALIT,VTI 2026-06-30 CUSIP override
+Olaplex Holdings Inc,679369108,OLPX,VTI 2026-06-30 CUSIP override
+AstroNova Inc,04638F108,ALOT,VTI 2026-06-30 CUSIP override
+Cleancore Solutions Inc,184492106,ZONE,VTI 2026-06-30 CUSIP override
+Modiv Industrial Inc,60784B101,MDV,VTI 2026-06-30 CUSIP override
+RE/MAX Holdings Inc,75524W108,RMAX,VTI 2026-06-30 CUSIP override
+First Seacoast Bancorp Inc,33631F104,FSEA,VTI 2026-06-30 CUSIP override
+KORE Group Holdings Inc,50066V305,KORE,VTI 2026-06-30 CUSIP override
+Affinity Bancshares Inc,00832E103,AFBI,VTI 2026-06-30 CUSIP override
+NSTS Bancorp Inc,6293JP109,NSTS,VTI 2026-06-30 CUSIP override
+NCS Multistage Holdings Inc,628877201,NCSM,VTI 2026-06-30 CUSIP override
+JFB Construction Holdings,46658E107,JFB,VTI 2026-06-30 CUSIP override
+LivePerson Inc,538146309,LPSN,VTI 2026-06-30 CUSIP override
+Electro-Sensors Inc,285233102,ELSE,VTI 2026-06-30 CUSIP override
+Sterling Bancorp Inc/MI,85917W102,SBT,VTI 2026-06-30 CUSIP override
+Aravive Inc,03890D108,ARAV,VTI 2026-06-30 CUSIP override
+Hyzon Motors Inc,44951Y201,HYZN,VTI 2026-06-30 CUSIP override

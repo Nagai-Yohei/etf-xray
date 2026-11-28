@@ -506,9 +506,9 @@ def extract_annual_financials(
         sh_dil_factor = _cumulative_split_factor(sh_dil_rec.filed if sh_dil_rec else filed, split_events)
         sh_out_factor = _cumulative_split_factor(sh_out_rec.filed if sh_out_rec else filed, split_events)
 
-        eps_adj = (eps_rec.val / eps_factor) if eps_rec is not None else None
-        dps_d_adj = (dps_d_rec.val / dps_d_factor) if dps_d_rec is not None else None
-        dps_p_adj = (dps_p_rec.val / dps_p_factor) if dps_p_rec is not None else None
+        eps_adj = (eps_rec.val / eps_factor) if (eps_rec is not None and eps_factor > 0) else None
+        dps_d_adj = (dps_d_rec.val / dps_d_factor) if (dps_d_rec is not None and dps_d_factor > 0) else None
+        dps_p_adj = (dps_p_rec.val / dps_p_factor) if (dps_p_rec is not None and dps_p_factor > 0) else None
         sh_dil_adj = (sh_dil_rec.val * sh_dil_factor) if (sh_dil_rec is not None and sh_dil_rec.val > 0) else None
         sh_out_adj = (sh_out_rec.val * sh_out_factor) if (sh_out_rec is not None and sh_out_rec.val > 0) else None
 
@@ -531,18 +531,24 @@ def extract_annual_financials(
 
         # Normalize CapEx, dividends paid, buybacks, and expense line items to positive magnitudes
         rev_val = rev_rec.val if rev_rec is not None else None
+        gp_val: float | None = None
         if gp_rec is not None:
-            gp_val: float | None = gp_rec.val
-        elif rev_val is not None and cor_rec is not None:
+            cand_gp = gp_rec.val
+            # Reject GrossProfit tags exceeding Revenue (unit typo or mismatched segment tag, e.g. HCTI, SOWG)
+            gp_invalid = rev_val is not None and (
+                (rev_val > 0 and cand_gp > rev_val * 1.05)
+                or (rev_val <= 0 and cand_gp > 0)
+            )
+            if not gp_invalid:
+                gp_val = cand_gp
+        if gp_val is None and rev_val is not None and cor_rec is not None:
             gp_val = rev_val - abs(cor_rec.val)
-        elif rev_val is not None and (cog_rec is not None or cos_rec is not None):
+        elif gp_val is None and rev_val is not None and (cog_rec is not None or cos_rec is not None):
             # Sum separate goods and services cost tags before subtracting from revenue (e.g. VZ, LMT, SLB)
             total_cost = (abs(cog_rec.val) if cog_rec is not None else 0.0) + (
                 abs(cos_rec.val) if cos_rec is not None else 0.0
             )
             gp_val = rev_val - total_cost
-        else:
-            gp_val = None
 
         capex_val = abs(capex_rec.val) if capex_rec is not None else None
         ocf_val = ocf_rec.val if ocf_rec is not None else None

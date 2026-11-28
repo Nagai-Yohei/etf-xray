@@ -759,6 +759,14 @@ class TestBalanceSheetAndEntities(unittest.TestCase):
         for common in ("AAPL", "BRK.B", "BF.B", "CWEN.A", "LEN.B", "GOOGL"):
             self.assertFalse(is_non_common_ticker(common), common)
 
+    def test_extreme_reverse_split_ratio_never_rounds_to_zero(self) -> None:
+        from src.xbrl.splits import _cumulative_split_factor, _snap_split_ratio
+
+        snapped = _snap_split_ratio(0.00004)
+        self.assertGreater(snapped, 0.0)
+        self.assertAlmostEqual(snapped, 0.00004, places=8)
+        self.assertGreater(_cumulative_split_factor("2020-01-01", [("2021-01-01", snapped)]), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
