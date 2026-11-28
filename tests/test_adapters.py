@@ -169,6 +169,42 @@ class TestVanguardLegacyAdapter(unittest.TestCase):
                 filed="2011-09-29",
             )
 
+    def test_skips_investments_summary_and_parses_full_schedule(self) -> None:
+        html = b"""
+        <html><body>
+        <p>Total Stock Market Index Fund</p>
+        <p>Statement of Net Assets&#8212;Investments Summary As of June 30, 2011</p>
+        <table>
+          <tr><th>Security</th><th>Shares</th><th>Market Value ($000)</th></tr>
+          <tr><td>Common Stocks (99.8%)</td><td></td><td></td></tr>
+          <tr><td>Exxon Mobil Corp.</td><td>1,000</td><td>80</td></tr>
+          <tr><td>Total Common Stocks (Cost $70)</td><td></td><td>100</td></tr>
+        </table>
+        <p>Total Stock Market Index Fund</p>
+        <p>Schedule of Investments As of June 30, 2011</p>
+        <table>
+          <tr><th>Security</th><th>Shares</th><th>Market Value ($000)</th></tr>
+          <tr><td>Common Stocks (99.8%)</td><td></td><td></td></tr>
+          <tr><td>Exxon Mobil Corp.</td><td>1,000</td><td>80</td></tr>
+          <tr><td>Apple Inc.</td><td>500</td><td>20</td></tr>
+          <tr><td>Total Common Stocks (Cost $70)</td><td></td><td>100</td></tr>
+        </table>
+        </body></html>
+        """
+        filing = parse_vanguard_legacy_html(
+            html_bytes=html,
+            etf_id="VTI",
+            fund_title="Total Stock Market Index Fund",
+            as_of="2011-06-30",
+            form="N-CSRS",
+            accession="0000932471-11-003264",
+            filed="2011-08-29",
+        )
+        self.assertEqual(len(filing.holdings), 2)
+        self.assertEqual(filing.holdings[0].reported_name, "Exxon Mobil Corp.")
+        self.assertEqual(filing.holdings[1].reported_name, "Apple Inc.")
+        self.assertEqual(filing.total_value_usd, 100_000.0)
+
 
 class TestInvescoLegacyAdapter(unittest.TestCase):
     def test_parses_2011_layout_name_shares_value(self) -> None:

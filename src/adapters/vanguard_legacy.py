@@ -147,7 +147,7 @@ def _find_section_bounds(html_text: str, fund_title: str) -> tuple[int, int]:
     title_low = fund_title.lower()
     forbidden = [w for w in _FORBIDDEN_PREFIX_WORDS if w not in title_low]
 
-    candidates: list[tuple[int, int]] = []
+    candidates: list[tuple[int, int, int]] = []
     for m in pattern.finditer(html_text):
         # Check preceding 25 chars for sibling-fund prefixes (e.g. International High Dividend...)
         prefix_raw = html_text[max(0, m.start() - 120) : m.start()]
@@ -159,34 +159,38 @@ def _find_section_bounds(html_text: str, fund_title: str) -> tuple[int, int]:
         tail_raw = html_text[m.end() : m.end() + 20000]
         tail_plain = _html_to_plain(tail_raw).lower()
 
-        # Skip audit report text
+        # Skip audit report text and condensed Top-50 Investments Summary tables
         if "in our opinion" in tail_plain[:160]:
             continue
+        if "investments summary" in tail_plain[:320] or "summary schedule" in tail_plain[:320]:
+            continue
         # Confirm this is a portfolio holdings schedule heading
-        has_stmt = (
-            "statement of net assets" in tail_plain[:260]
-            or "schedule of investments" in tail_plain[:260]
-        )
-        if not has_stmt:
+        is_schedule = "schedule of investments" in tail_plain[:260]
+        is_net_assets = "statement of net assets" in tail_plain[:260]
+        if not (is_schedule or is_net_assets):
             continue
         if "common stocks" not in tail_plain:
             continue
 
-        # Prefer headings containing "As of"
-        prio = 0 if "as of" in tail_plain[:350] else 1
-        candidates.append((prio, m.start()))
+        # Prefer full Schedule of Investments over Statement of Net Assets (for large funds like VTI
+        # that print a condensed Statement of Net Assets before the full Schedule of Investments),
+        # and prefer headings containing "As of"
+        kind_prio = 0 if is_schedule else 1
+        as_of_prio = 0 if "as of" in tail_plain[:350] else 1
+        candidates.append((kind_prio, as_of_prio, m.start()))
 
     if not candidates:
         raise ValueError(f"Vanguard holdings section not found for {fund_title!r}")
 
-    candidates.sort(key=lambda x: (x[0], x[1]))
-    start_pos = candidates[0][1]
+    candidates.sort(key=lambda x: (x[0], x[1], x[2]))
+    start_pos = candidates[0][2]
 
-    # Locate the first "Total Common Stocks" or "Total Investments" after start_pos (up to 4.5MB window).
+    # Locate the first "Total Common Stocks" or "Total Investments" after start_pos (up to 8.5MB window
+    # to accommodate ~3,500-stock schedules such as VTI 2019-06-30).
     # When a fund holds 100% common stocks with zero temporary cash, Vanguard prints "Total Investments"
     # directly at the end of Common Stocks; taking the earlier terminator also prevents bleeding into
     # a subsequent fund's section inside multi-fund filings.
-    search_window = html_text[start_pos : start_pos + 4_500_000]
+    search_window = html_text[start_pos : start_pos + 8_500_000]
     total_cs_pat = re.compile(
         r"(?:<[^>]+>|&nbsp;|&#160;|\s)+".join(
             _word_html_pat(w) for w in ("Total", "Common", "Stocks")

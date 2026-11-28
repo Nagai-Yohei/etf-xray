@@ -164,7 +164,8 @@
     ],
     "structure": "open_end",
     "fiscal_year_end_month": 12,
-    "legacy_adapter": null,
+    "legacy_adapter": "vanguard_legacy",
+    "legacy_fund_title": "Total Stock Market Index Fund",
     "active": true
   }
 ]
