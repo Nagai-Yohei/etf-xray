@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -526,10 +527,14 @@ def update_fundamentals_incremental(
     client: EdgarClient,
     *,
     xbrl_max_age_days: float = 14.0,
+    xbrl_limit: int = 0,
     tickers_max_age_days: float = 7.0,
     offline_only: bool = False,
 ) -> tuple[int, int, int]:
     """Refresh stale CompanyFacts for active holdings and newly added securities.
+
+    When `xbrl_limit > 0`, caps the number of stale CIK chains network-refreshed
+    in a single run (prioritizing missing / oldest-cached chains first).
 
     Returns (checked_count, updated_count, missing_count).
     """
@@ -576,6 +581,23 @@ def update_fundamentals_incremental(
         """
     ).fetchall()
 
+    # If xbrl_limit > 0, pick up to `xbrl_limit` oldest stale CIK chains for network refresh
+    network_allowed_chains: set[tuple[str, ...]] | None = None
+    if xbrl_limit > 0 and not offline_only:
+        cutoff_ts = time.time() - (max(xbrl_max_age_days, 0.0) * 86400.0)
+        stale_chains: list[tuple[float, tuple[str, ...]]] = []
+        seen_chains: set[tuple[str, ...]] = set()
+        for row in targets:
+            chain = get_cik_chain(row["security_id"], row["cik"], cik_overrides)
+            if chain in seen_chains:
+                continue
+            seen_chains.add(chain)
+            oldest_mtime = min(client.get_company_facts_mtime(c) for c in chain)
+            if xbrl_max_age_days <= 0 or oldest_mtime < cutoff_ts:
+                stale_chains.append((oldest_mtime, chain))
+        stale_chains.sort(key=lambda item: (item[0], item[1]))
+        network_allowed_chains = {chain for _, chain in stale_chains[:xbrl_limit]}
+
     # Cache refresh status (available_ciks, chain_changed) and parsed tuples per CIK chain
     chain_status_cache: dict[tuple[str, ...], tuple[list[str], bool]] = {}
     parsed_cache: dict[
@@ -594,13 +616,16 @@ def update_fundamentals_incremental(
         checked_count += 1
 
         if cik_chain not in chain_status_cache:
+            use_offline = offline_only or (
+                network_allowed_chains is not None and cik_chain not in network_allowed_chains
+            )
             available_ciks: list[str] = []
             chain_changed = False
             for c in cik_chain:
                 try:
                     changed = client.refresh_company_facts(
                         c,
-                        offline_only=offline_only,
+                        offline_only=use_offline,
                         max_age_days=xbrl_max_age_days,
                     )
                     available_ciks.append(c)
@@ -608,7 +633,7 @@ def update_fundamentals_incremental(
                         chain_changed = True
                 except RuntimeError as exc:
                     msg = str(exc)
-                    if "HTTP 404" in msg or (offline_only and "offline mode" in msg):
+                    if "HTTP 404" in msg or (use_offline and "offline mode" in msg):
                         continue
                     raise
             chain_status_cache[cik_chain] = (available_ciks, chain_changed)
@@ -785,6 +810,7 @@ def run_incremental_refresh(
     etf_filter: set[str] | None = None,
     etf_max_age_days: float = 0.5,
     xbrl_max_age_days: float = 14.0,
+    xbrl_limit: int = 0,
     tickers_max_age_days: float = 7.0,
     skip_etf: bool = False,
     skip_xbrl: bool = False,
@@ -895,6 +921,7 @@ def run_incremental_refresh(
                 conn,
                 edgar,
                 xbrl_max_age_days=xbrl_max_age_days,
+                xbrl_limit=xbrl_limit,
                 tickers_max_age_days=tickers_max_age_days,
                 offline_only=offline_only,
             )
@@ -1010,6 +1037,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Max cache age in days for active security CompanyFacts (default: 14)",
     )
     parser.add_argument(
+        "--xbrl-limit",
+        type=int,
+        default=0,
+        help="Max stale CIK chains to network-refresh per run, oldest first (0 = unlimited)",
+    )
+    parser.add_argument(
         "--tickers-max-age-days",
         type=float,
         default=7.0,
@@ -1059,6 +1092,7 @@ def main(argv: list[str] | None = None) -> int:
         etf_filter=etf_filter,
         etf_max_age_days=args.etf_max_age_days,
         xbrl_max_age_days=args.xbrl_max_age_days,
+        xbrl_limit=args.xbrl_limit,
         tickers_max_age_days=args.tickers_max_age_days,
         skip_etf=args.skip_etf,
         skip_xbrl=args.skip_xbrl,

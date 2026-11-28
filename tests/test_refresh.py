@@ -15,10 +15,12 @@ from unittest.mock import MagicMock, patch
 from src.adapters.nport import FilingHoldings, RawHolding, fetch_new_etf_nport_filings
 from src.db import init_db
 from src.edgar import EdgarClient
+from src.export_site import export_site, stock_shard_id
 from src.identify import ResolvedHolding
 from src.refresh import (
     format_summary_report,
     run_incremental_refresh,
+    update_fundamentals_incremental,
     upsert_etf_holdings_incremental,
 )
 
@@ -470,6 +472,157 @@ class TestIncrementalUpsertAndSafetyGates(unittest.TestCase):
             self.assertFalse(summary.check_passed)
             self.assertFalse(summary.deployed)
             mock_deploy.assert_not_called()
+
+    def test_gzip_cache_migration_and_legacy_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            client = EdgarClient(cache_dir=cache_dir, min_interval=0.2)
+            client._wait_rate_limit = MagicMock()  # type: ignore[method-assign]
+
+            # Seed legacy uncompressed companyfacts file
+            legacy_file = cache_dir / "companyfacts" / "CIK0000320193.json"
+            legacy_file.parent.mkdir(parents=True)
+            legacy_payload = b'{"entityName": "Apple Inc.", "facts": {}}'
+            legacy_file.write_bytes(legacy_payload)
+
+            fake_session = MagicMock()
+            fake_session.get.return_value = MagicMock(status_code=200, content=legacy_payload)
+            client._session = fake_session
+
+            # Fresh legacy cache hit -> reads uncompressed without network
+            payload, changed = client.get_company_facts_with_status(
+                "320193", max_age_days=14.0
+            )
+            self.assertEqual(payload["entityName"], "Apple Inc.")
+            self.assertFalse(changed)
+            self.assertEqual(fake_session.get.call_count, 0)
+
+            # Expire legacy file -> re-fetches identical bytes, writes .json.gz, removes legacy .json, changed=False
+            old_ts = time.time() - (20 * 86400)
+            os.utime(legacy_file, (old_ts, old_ts))
+            changed2 = client.refresh_company_facts("320193", max_age_days=14.0)
+            self.assertFalse(changed2)
+            self.assertEqual(fake_session.get.call_count, 1)
+
+            gz_file = cache_dir / "companyfacts" / "CIK0000320193.json.gz"
+            self.assertTrue(gz_file.is_file())
+            self.assertFalse(legacy_file.exists())
+
+            # Fresh .json.gz hit -> reads cleanly offline with 0 network calls
+            payload3, changed3 = client.get_company_facts_with_status(
+                "320193", offline_only=True
+            )
+            self.assertEqual(payload3["entityName"], "Apple Inc.")
+            self.assertFalse(changed3)
+            self.assertEqual(fake_session.get.call_count, 1)
+
+    def test_xbrl_limit_prioritizes_oldest_stale_chains(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            conn = init_db(db_path)
+            try:
+                conn.execute(
+                    "INSERT INTO etfs (etf_id, name, issuer, cik, structure, active) VALUES ('TST', 'Test', 'I', '0000000001', 'open_end', 1)"
+                )
+                conn.execute(
+                    "INSERT INTO etf_dates (etf_id, as_of, holdings_count, total_value_usd, source, accession) VALUES ('TST', '2026-09-30', 2, 1000.0, 'NPORT-P', 'acc1')"
+                )
+                conn.executemany(
+                    "INSERT INTO securities (security_id, ticker, name, cik) VALUES (?, ?, ?, ?)",
+                    [
+                        ("AAA", "AAA", "Alpha", "0000000101"),
+                        ("BBB", "BBB", "Beta", "0000000102"),
+                    ],
+                )
+                conn.executemany(
+                    "INSERT INTO etf_holdings (etf_id, as_of, security_id, ticker, reported_name, shares, value_usd, weight, rank) VALUES ('TST', '2026-09-30', ?, ?, ?, 10, 500, 0.5, ?)",
+                    [("AAA", "AAA", "Alpha", 1), ("BBB", "BBB", "Beta", 2)],
+                )
+                conn.executemany(
+                    "INSERT INTO financials_annual (security_id, fy_end) VALUES (?, '2025-12-31')",
+                    [("AAA",), ("BBB",)],
+                )
+                conn.commit()
+
+                client = MagicMock(spec=EdgarClient)
+                client.build_ticker_to_cik_map.return_value = {}
+                # BBB is older than AAA -> xbrl_limit=1 must network-refresh ONLY BBB
+                now = time.time()
+                client.get_company_facts_mtime.side_effect = lambda c: (
+                    now - 30 * 86400 if c == "0000000102" else now - 20 * 86400
+                )
+                client.refresh_company_facts.return_value = False
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    checked, updated, missing = update_fundamentals_incremental(
+                        conn, client, xbrl_max_age_days=14.0, xbrl_limit=1
+                    )
+
+                self.assertEqual((checked, updated, missing), (2, 0, 0))
+                calls_by_cik = {
+                    call.args[0]: call.kwargs["offline_only"]
+                    for call in client.refresh_company_facts.call_args_list
+                }
+                self.assertEqual(calls_by_cik["0000000102"], False)
+                self.assertEqual(calls_by_cik["0000000101"], True)
+            finally:
+                conn.close()
+
+    def test_sharded_export_and_active_former_index_split(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            dist_dir = Path(tmp) / "dist"
+            conn = init_db(db_path)
+            try:
+                conn.execute(
+                    "INSERT INTO etfs (etf_id, name, issuer, cik, structure, active) VALUES ('TST', 'Test ETF', 'Issuer', '0000000001', 'open_end', 1)"
+                )
+                conn.executemany(
+                    "INSERT INTO etf_dates (etf_id, as_of, holdings_count, total_value_usd, source, accession) VALUES ('TST', ?, 1, 1000.0, 'NPORT-P', ?)",
+                    [("2025-12-31", "acc1"), ("2026-03-31", "acc2")],
+                )
+                conn.executemany(
+                    "INSERT INTO securities (security_id, ticker, name, cik, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        ("AAPL", "AAPL", "Apple Inc", "0000320193", "2026-03-31", "2026-03-31"),
+                        ("OLD", "OLD", "Old Corp", "0000000002", "2025-12-31", "2025-12-31"),
+                    ],
+                )
+                conn.executemany(
+                    "INSERT INTO etf_holdings (etf_id, as_of, security_id, ticker, reported_name, shares, value_usd, weight, rank) VALUES ('TST', ?, ?, ?, ?, 10, 1000.0, 1.0, 1)",
+                    [
+                        ("2025-12-31", "OLD", "OLD", "Old Corp"),
+                        ("2026-03-31", "AAPL", "AAPL", "Apple Inc"),
+                    ],
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            stats = export_site(db_path=db_path, dist_dir=dist_dir)
+            self.assertEqual(stats["stock_count"], 2)
+
+            stocks_dir = dist_dir / "data" / "stocks"
+            active_idx = json.loads((stocks_dir / "index-active.json").read_text(encoding="utf-8"))
+            former_idx = json.loads((stocks_dir / "index-former.json").read_text(encoding="utf-8"))
+            meta = json.loads((dist_dir / "data" / "meta.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(set(active_idx.keys()), {"AAPL"})
+            self.assertEqual(set(former_idx.keys()), {"OLD"})
+            self.assertEqual(meta["stock_count"], 2)
+            self.assertEqual(meta["active_stock_count"], 1)
+            self.assertEqual(meta["former_stock_count"], 1)
+            self.assertFalse((stocks_dir / "index.json").exists())
+            self.assertFalse((stocks_dir / "AAPL.json").exists())
+
+            aapl_shard = json.loads(
+                (stocks_dir / "shards" / f"{stock_shard_id('AAPL')}.json").read_text(encoding="utf-8")
+            )
+            old_shard = json.loads(
+                (stocks_dir / "shards" / f"{stock_shard_id('OLD')}.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(aapl_shard["AAPL"]["ticker"], "AAPL")
+            self.assertEqual(old_shard["OLD"]["ticker"], "OLD")
 
 
 if __name__ == "__main__":

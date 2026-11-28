@@ -6,7 +6,12 @@
  * - Holding tenure map (Canvas heatmap)
  */
 
-import { getEtfHoldings, getEtfSummary, getStocksIndex } from "./api.js";
+import {
+  getActiveStocksIndex,
+  getEtfHoldings,
+  getEtfSummary,
+  getStocksIndex,
+} from "./api.js";
 import {
   baseChartOptions,
   createChart,
@@ -20,6 +25,7 @@ import {
 import {
   clearNode,
   el,
+  fmtInt,
   fmtMultiple,
   fmtPct,
   fmtPctPoints,
@@ -48,15 +54,19 @@ export async function renderEtfView(
   clearNode(root);
   root.appendChild(el("div", { className: "loading-box", text: `Loading ${etfId} holdings...` }));
 
-  const [summary, stocksIndex] = await Promise.all([
+  const [summary, activeIndex] = await Promise.all([
     getEtfSummary(etfId),
-    getStocksIndex(),
+    getActiveStocksIndex(),
   ]);
   if (isStale()) return null;
+
+  let stocksIndex = activeIndex;
+  let fullIndexLoaded = false;
 
   const dateList = summary.dates.map((d) => d.as_of);
   let selectedAsOf =
     initialAsOf && dateList.includes(initialAsOf) ? initialAsOf : summary.latest_as_of;
+  const currentTenureCount = summary.tenure_map.filter((x) => x.in_latest).length;
 
   const state = {
     visibleCols: loadSavedColumns(),
@@ -64,9 +74,11 @@ export async function renderEtfView(
     sortDir: "asc",
     filterText: "",
     onlyNew: false,
+    page: 1,
+    pageSize: 100,
     tableExpanded: false,
     popoverOpen: false,
-    tenureFilter: "current",
+    tenureFilter: currentTenureCount > 600 ? "top120" : "current",
     holdingsData: null,
   };
 
@@ -143,11 +155,20 @@ export async function renderEtfView(
   async function selectDate(asOf, scrollToSnapshot = false) {
     const reqId = ++dateReqSeq;
     selectedAsOf = asOf;
+    state.page = 1;
     if (typeof onDateChange === "function") {
       onDateChange(selectedAsOf, selectedAsOf === summary.latest_as_of);
     }
-    const nextHoldings = await getEtfHoldings(etfId, asOf);
+    const needsFullIndex = !fullIndexLoaded && asOf !== summary.latest_as_of;
+    const [nextHoldings, nextFullIndex] = await Promise.all([
+      getEtfHoldings(etfId, asOf),
+      needsFullIndex ? getStocksIndex() : Promise.resolve(null),
+    ]);
     if (isStale() || reqId !== dateReqSeq) return;
+    if (nextFullIndex) {
+      stocksIndex = nextFullIndex;
+      fullIndexLoaded = true;
+    }
     state.holdingsData = nextHoldings;
     renderSnapshotHeader();
     renderKpis();
@@ -330,6 +351,7 @@ export async function renderEtfView(
         state.sortKey = key;
         state.sortDir = defaultDir;
       }
+      state.page = 1;
       renderHoldingsCard();
     }
 
@@ -338,12 +360,29 @@ export async function renderEtfView(
       return state.sortDir === "asc" ? " ▲" : " ▼";
     }
 
+    // Paginate rows so large ETFs (e.g. 500–10,000 holdings) never stall DOM rendering
+    const allowAllRows = rows.length <= 1000;
+    if (state.pageSize === 0 && !allowAllRows) {
+      state.pageSize = 100;
+    }
+    const effectivePageSize = state.pageSize > 0 ? state.pageSize : Math.max(1, rows.length);
+    const totalPages = Math.max(1, Math.ceil(rows.length / effectivePageSize));
+    if (state.page > totalPages) state.page = totalPages;
+    const startIdx = (state.page - 1) * effectivePageSize;
+    const endIdx = Math.min(rows.length, startIdx + effectivePageSize);
+    const pageRows = rows.slice(startIdx, endIdx);
+
+    const rangeLabel =
+      totalPages > 1
+        ? `${fmtInt(startIdx + 1)}–${fmtInt(endIdx)} of ${fmtInt(rows.length)}`
+        : `${fmtInt(rows.length)} of ${fmtInt(hd.holdings.length)}`;
+
     // Header
     tableCard.appendChild(
       el("div", { className: "card-header" }, [
         el("h2", {
           className: "card-title",
-          text: `Holdings (${rows.length} of ${hd.holdings.length}) · ${hd.as_of}`,
+          text: `Holdings (${rangeLabel}) · ${hd.as_of}`,
         }),
         el("span", {
           className: "text-muted",
@@ -414,6 +453,7 @@ export async function renderEtfView(
       value: state.filterText,
       onInput: (e) => {
         state.filterText = e.target.value;
+        state.page = 1;
         renderHoldingsCard();
         // Preserve input focus across re-renders
         const nextInput = tableCard.querySelector(".filter-input");
@@ -430,9 +470,36 @@ export async function renderEtfView(
       text: "New Only",
       onClick: () => {
         state.onlyNew = !state.onlyNew;
+        state.page = 1;
         renderHoldingsCard();
       },
     });
+
+    const pageSizeOpts = [
+      { value: 50, label: "50 / page" },
+      { value: 100, label: "100 / page" },
+      { value: 250, label: "250 / page" },
+      ...(allowAllRows ? [{ value: 0, label: "All rows" }] : []),
+    ];
+    const pageSizeSel = el(
+      "select",
+      {
+        className: "select-control select-sm",
+        ariaLabel: "Holdings rows per page",
+        onChange: (e) => {
+          state.pageSize = Number(e.target.value);
+          state.page = 1;
+          renderHoldingsCard();
+        },
+      },
+      pageSizeOpts.map((opt) =>
+        el("option", {
+          value: String(opt.value),
+          text: opt.label,
+          selected: state.pageSize === opt.value,
+        })
+      )
+    );
 
     const expandBtn = el("button", {
       type: "button",
@@ -447,7 +514,7 @@ export async function renderEtfView(
     tableCard.appendChild(
       el("div", { className: "toolbar" }, [
         el("div", { className: "toolbar-group" }, [...presetButtons, colMenuWrap]),
-        el("div", { className: "toolbar-group" }, [filterInput, newOnlyBtn, expandBtn]),
+        el("div", { className: "toolbar-group" }, [filterInput, newOnlyBtn, pageSizeSel, expandBtn]),
       ])
     );
 
@@ -492,7 +559,7 @@ export async function renderEtfView(
         ])
       );
     } else {
-      for (const row of rows) {
+      for (const row of pageRows) {
         const { h } = row;
         let qoqNode;
         if (h.is_new) {
@@ -535,6 +602,37 @@ export async function renderEtfView(
         [el("table", { className: "data-table" }, [el("thead", {}, [theadRow]), tbody])]
       )
     );
+
+    if (totalPages > 1) {
+      tableCard.appendChild(
+        el("div", { className: "screener-pagination" }, [
+          el("button", {
+            type: "button",
+            className: "btn btn-sm",
+            text: "← Previous",
+            disabled: state.page <= 1,
+            onClick: () => {
+              state.page = Math.max(1, state.page - 1);
+              renderHoldingsCard();
+            },
+          }),
+          el("span", {
+            className: "text-muted screener-page-indicator",
+            text: `Page ${fmtInt(state.page)} of ${fmtInt(totalPages)} (${fmtInt(rows.length)} holdings)`,
+          }),
+          el("button", {
+            type: "button",
+            className: "btn btn-sm",
+            text: "Next →",
+            disabled: state.page >= totalPages,
+            onClick: () => {
+              state.page = Math.min(totalPages, state.page + 1);
+              renderHoldingsCard();
+            },
+          }),
+        ])
+      );
+    }
   }
 
   function renderChangesCard() {
@@ -765,6 +863,7 @@ export async function renderEtfView(
   function renderTenureMapCard() {
     clearNode(tenureCard);
 
+    const MAX_TENURE_CANVAS_ROWS = 1500;
     let items = summary.tenure_map;
     if (state.tenureFilter === "current") {
       items = items.filter((x) => x.in_latest);
@@ -774,8 +873,14 @@ export async function renderEtfView(
         .slice(0, 120);
     }
 
+    const totalFiltered = items.length;
+    const isCapped = totalFiltered > MAX_TENURE_CANVAS_ROWS;
+    if (isCapped) {
+      items = items.slice(0, MAX_TENURE_CANVAS_ROWS);
+    }
+
     const filterBtns = [
-      { id: "current", label: `Current (${summary.tenure_map.filter((x) => x.in_latest).length})` },
+      { id: "current", label: `Current (${currentTenureCount})` },
       { id: "top120", label: "Longest Held (Top 120)" },
       { id: "all", label: `All Historical (${summary.tenure_map.length})` },
     ].map((opt) =>
@@ -790,9 +895,12 @@ export async function renderEtfView(
       })
     );
 
+    const defaultStatusText = isCapped
+      ? `Showing top ${fmtInt(MAX_TENURE_CANVAS_ROWS)} of ${fmtInt(totalFiltered)} constituents (sorted by tenure & weight). Hover to inspect; click to open Stock View.`
+      : "Hover over any row to inspect tenure & quarter; click to open Stock View.";
     const statusLine = el("div", {
       className: "tenure-status",
-      text: "Hover over any row to inspect tenure & quarter; click to open Stock View.",
+      text: defaultStatusText,
     });
 
     const labelWidth = 84;
@@ -955,7 +1063,7 @@ export async function renderEtfView(
     canvas.addEventListener("mousemove", (ev) => {
       const hit = hitAtEvent(ev);
       if (!hit) {
-        statusLine.textContent = "Hover over any row to inspect tenure & quarter; click to open Stock View.";
+        statusLine.textContent = defaultStatusText;
         return;
       }
       const { item, heldSet, colIdx } = hit;
@@ -970,7 +1078,7 @@ export async function renderEtfView(
     });
 
     canvas.addEventListener("mouseleave", () => {
-      statusLine.textContent = "Hover over any row to inspect tenure & quarter; click to open Stock View.";
+      statusLine.textContent = defaultStatusText;
     });
 
     canvas.addEventListener("click", (ev) => {

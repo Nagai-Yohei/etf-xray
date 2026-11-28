@@ -4,8 +4,9 @@ Output files:
 - dist/data/meta.json
 - dist/data/etf/<ETF_ID>/summary.json
 - dist/data/etf/<ETF_ID>/holdings/<AS_OF>.json
-- dist/data/stocks/index.json
-- dist/data/stocks/<SECURITY_ID>.json
+- dist/data/stocks/index-active.json
+- dist/data/stocks/index-former.json
+- dist/data/stocks/shards/<00..ff>.json
 """
 
 from __future__ import annotations
@@ -35,6 +36,18 @@ def _safe_filename(ident: str) -> str:
     if not _SAFE_ID_RE.match(ident):
         raise ValueError(f"Unsafe filename identifier: {ident!r}")
     return ident
+
+
+def stock_shard_id(security_id: str) -> str:
+    """Return a deterministic 2-hex-digit shard ID (FNV-1a 32-bit mod 256).
+
+    Must match `stockShardId` in `web/js/api.js` identically.
+    """
+    h = 0x811C9DC5
+    for b in security_id.encode("utf-8"):
+        h ^= b
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return f"{h & 0xFF:02x}"
 
 
 def _copy_web_assets(dist_dir: Path) -> None:
@@ -358,8 +371,10 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                 }
             )
 
-        stocks_index: dict[str, dict[str, Any]] = {}
-        stock_file_count = 0
+        stocks_index_active: dict[str, dict[str, Any]] = {}
+        stocks_index_former: dict[str, dict[str, Any]] = {}
+        sharded_stocks: dict[str, dict[str, dict[str, Any]]] = {}
+        stock_count = 0
 
         for s in sec_rows:
             sec_id = _safe_filename(s["security_id"])
@@ -371,7 +386,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
             active_etfs = sorted(etf_membership.get(sec_id, set()))
             all_etfs = sorted((etf_hist_by_sec.get(sec_id) or {}).keys())
 
-            stocks_index[sec_id] = {
+            index_entry = {
                 "security_id": sec_id,
                 "ticker": s["ticker"],
                 "name": s["name"],
@@ -413,6 +428,10 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                 "eps_ttm": t_clean.get("eps_ttm"),
                 "dps_ttm": t_clean.get("dps_ttm"),
             }
+            if active_etfs:
+                stocks_index_active[sec_id] = index_entry
+            else:
+                stocks_index_former[sec_id] = index_entry
 
             hist_by_etf = etf_hist_by_sec.get(sec_id, {})
             all_hist_dates = sorted(
@@ -421,32 +440,34 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
             eff_first_seen = all_hist_dates[0] if all_hist_dates else s["first_seen"]
             eff_last_seen = all_hist_dates[-1] if all_hist_dates else s["last_seen"]
 
-            _write_json(
-                data_dir / "stocks" / f"{sec_id}.json",
-                {
-                    "security_id": sec_id,
-                    "ticker": s["ticker"],
-                    "name": s["name"],
-                    "cusip": s["cusip"],
-                    "isin": s["isin"],
-                    "cik": s["cik"],
-                    "sic": s["sic"],
-                    "sic_description": s["sic_description"],
-                    "sector_group": s["sector_group"],
-                    "first_seen": eff_first_seen,
-                    "last_seen": eff_last_seen,
-                    "current_etfs": active_etfs,
-                    "metrics": m_clean,
-                    "ttm": t_clean or None,
-                    "annual": annual_by_sec.get(sec_id, []),
-                    "quarterly": quarterly_by_sec.get(sec_id, []),
-                    "prices": prices_by_sec.get(sec_id, []),
-                    "etf_history": hist_by_etf,
-                },
-            )
-            stock_file_count += 1
+            shard = stock_shard_id(sec_id)
+            sharded_stocks.setdefault(shard, {})[sec_id] = {
+                "security_id": sec_id,
+                "ticker": s["ticker"],
+                "name": s["name"],
+                "cusip": s["cusip"],
+                "isin": s["isin"],
+                "cik": s["cik"],
+                "sic": s["sic"],
+                "sic_description": s["sic_description"],
+                "sector_group": s["sector_group"],
+                "first_seen": eff_first_seen,
+                "last_seen": eff_last_seen,
+                "current_etfs": active_etfs,
+                "metrics": m_clean,
+                "ttm": t_clean or None,
+                "annual": annual_by_sec.get(sec_id, []),
+                "quarterly": quarterly_by_sec.get(sec_id, []),
+                "prices": prices_by_sec.get(sec_id, []),
+                "etf_history": hist_by_etf,
+            }
+            stock_count += 1
 
-        _write_json(data_dir / "stocks" / "index.json", stocks_index)
+        for shard in sorted(sharded_stocks):
+            _write_json(data_dir / "stocks" / "shards" / f"{shard}.json", sharded_stocks[shard])
+
+        _write_json(data_dir / "stocks" / "index-active.json", stocks_index_active)
+        _write_json(data_dir / "stocks" / "index-former.json", stocks_index_former)
 
         # ------------------------------------------------------------
         # 3. meta.json
@@ -465,7 +486,10 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     "For informational purposes only; not investment advice."
                 ),
                 "etfs": meta_etfs,
-                "stock_count": stock_file_count,
+                "stock_count": stock_count,
+                "active_stock_count": len(stocks_index_active),
+                "former_stock_count": len(stocks_index_former),
+                "stock_shard_count": len(sharded_stocks),
             },
         )
 
@@ -482,7 +506,8 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
         return {
             "etfs": len(meta_etfs),
             "holdings_files": holdings_file_count,
-            "stock_files": stock_file_count,
+            "stock_files": len(sharded_stocks),
+            "stock_count": stock_count,
         }
     finally:
         conn.close()

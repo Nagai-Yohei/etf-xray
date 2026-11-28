@@ -6,6 +6,7 @@
  * - Public data methodology summary
  */
 
+import { getStocksIndex } from "./api.js";
 import { destroyAllCharts } from "./charts.js";
 import {
   clearNode,
@@ -47,8 +48,26 @@ function renderHeroSection(meta, stocksList, navigate) {
     role: "listbox",
   });
 
+  let searchableStocks = stocksList;
+  let fullSearchLoaded = searchableStocks.length >= (meta.stock_count || 0);
+
   function closeDropdown() {
     searchDropdown.classList.add("hidden");
+  }
+
+  function warmFullSearch() {
+    if (fullSearchLoaded) return;
+    fullSearchLoaded = true;
+    getStocksIndex()
+      .then((fullMap) => {
+        searchableStocks = Object.values(fullMap);
+        if (document.activeElement === searchInput && searchInput.value.trim()) {
+          renderResults(searchInput.value);
+        }
+      })
+      .catch(() => {
+        fullSearchLoaded = false;
+      });
   }
 
   function renderResults(query) {
@@ -58,7 +77,7 @@ function renderHeroSection(meta, stocksList, navigate) {
       closeDropdown();
       return;
     }
-    const matches = stocksList
+    const matches = searchableStocks
       .filter(
         (s) =>
           (s.ticker || "").toLowerCase().includes(q) ||
@@ -120,8 +139,12 @@ function renderHeroSection(meta, stocksList, navigate) {
     searchDropdown.classList.remove("hidden");
   }
 
-  searchInput.addEventListener("input", (e) => renderResults(e.target.value));
+  searchInput.addEventListener("input", (e) => {
+    renderResults(e.target.value);
+    warmFullSearch();
+  });
   searchInput.addEventListener("focus", (e) => {
+    warmFullSearch();
     if (e.target.value.trim()) renderResults(e.target.value);
   });
   searchInput.addEventListener("keydown", (e) => {
@@ -167,7 +190,10 @@ function renderHeroSection(meta, stocksList, navigate) {
       el("div", { className: "home-stat-label", text: "Quarterly Filings" }),
     ]),
     el("div", { className: "home-stat" }, [
-      el("div", { className: "home-stat-value", text: stocksList.length.toLocaleString("en-US") }),
+      el("div", {
+        className: "home-stat-value",
+        text: (meta.stock_count ?? stocksList.length).toLocaleString("en-US"),
+      }),
       el("div", { className: "home-stat-label", text: "Tracked Securities" }),
     ]),
     el("div", { className: "home-stat" }, [

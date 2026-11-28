@@ -8,7 +8,7 @@
  *   #/stock/<SECURITY_ID> (Individual stock fundamentals view)
  */
 
-import { getMeta, getStocksIndex } from "./api.js";
+import { getActiveStocksIndex, getMeta, getStocksIndex } from "./api.js";
 import { renderCompareView } from "./compare-view.js";
 import { clearNode, el, fmtPct } from "./dom.js";
 import { renderEtfView } from "./etf-view.js";
@@ -117,10 +117,20 @@ window.addEventListener("resize", scheduleStickySync, { passive: true });
 let metaData = null;
 let stocksIndexMap = {};
 let stocksList = [];
+let fullIndexLoaded = false;
 let currentEtfId = "SCHD";
 let lastBackTarget = null;
 let cleanupView = null;
 let routeSeq = 0;
+
+async function ensureFullStocksIndex() {
+  if (fullIndexLoaded) return stocksIndexMap;
+  const full = await getStocksIndex();
+  stocksIndexMap = full;
+  stocksList = Object.values(full);
+  fullIndexLoaded = true;
+  return full;
+}
 
 function navigate(hash) {
   if (window.location.hash === hash) {
@@ -207,8 +217,23 @@ function setupGlobalSearch() {
     searchDropdown.classList.remove("hidden");
   }
 
-  searchInput.addEventListener("input", (e) => renderResults(e.target.value));
+  function warmFormerIndex() {
+    if (fullIndexLoaded) return;
+    ensureFullStocksIndex()
+      .then(() => {
+        if (document.activeElement === searchInput && searchInput.value.trim()) {
+          renderResults(searchInput.value);
+        }
+      })
+      .catch(() => {});
+  }
+
+  searchInput.addEventListener("input", (e) => {
+    renderResults(e.target.value);
+    warmFormerIndex();
+  });
   searchInput.addEventListener("focus", (e) => {
+    warmFormerIndex();
     if (e.target.value.trim()) renderResults(e.target.value);
   });
   searchInput.addEventListener("keydown", (e) => {
@@ -389,10 +414,10 @@ async function handleRoute() {
 
 async function init() {
   try {
-    const [meta, stocksIndex] = await Promise.all([getMeta(), getStocksIndex()]);
+    const [meta, activeIndex] = await Promise.all([getMeta(), getActiveStocksIndex()]);
     metaData = meta;
-    stocksIndexMap = stocksIndex;
-    stocksList = Object.values(stocksIndex);
+    stocksIndexMap = activeIndex;
+    stocksList = Object.values(activeIndex);
 
     clearNode(etfSwitcher);
     etfSwitcher.appendChild(el("option", { value: "", text: "All ETFs (Home)" }));

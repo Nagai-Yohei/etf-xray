@@ -18,6 +18,7 @@ import unittest
 from pathlib import Path
 
 from src.env import DB_PATH, DIST_DIR, ENV_PATH, PROJECT_ROOT, parse_dotenv_file
+from src.export_site import stock_shard_id
 
 # Split pattern literals to avoid self-matching this module
 PAT_PRIVATE_KEY = re.compile("-----BEGIN" + r" [A-Z0-9 ]*PRIVATE KEY-----")
@@ -457,85 +458,124 @@ def check_database(errors: list[str]) -> str:
 
 
 def check_dist_json(errors: list[str]) -> str:
-    """Verify all JSON files under dist/ parse cleanly and stock index cross-references exist."""
+    """Verify all JSON files under dist/ parse cleanly and stock/shard/meta cross-references match."""
     if not DIST_DIR.is_dir():
         return "skipped (dist not built yet)"
 
     json_files = sorted(DIST_DIR.rglob("*.json"))
+    parsed_by_rel: dict[str, object] = {}
     for jf in json_files:
+        rel_dist = jf.relative_to(DIST_DIR).as_posix()
         try:
-            json.loads(jf.read_text(encoding="utf-8"))
+            parsed_by_rel[rel_dist] = json.loads(jf.read_text(encoding="utf-8"))
         except Exception as exc:  # noqa: BLE001
             rel = jf.relative_to(PROJECT_ROOT)
             errors.append(f"[DIST] Invalid JSON in {rel}: {exc}")
 
-    # Verify 4-way synchronization across meta.json, etf summaries, holdings files, and stocks/index.json
-    stocks_index_path = DIST_DIR / "data" / "stocks" / "index.json"
-    meta_path = DIST_DIR / "data" / "meta.json"
-    if stocks_index_path.is_file():
-        try:
-            idx_data = json.loads(stocks_index_path.read_text(encoding="utf-8"))
-            if isinstance(idx_data, dict):
-                stocks_dir = stocks_index_path.parent
-                actual_files = {
-                    p.stem for p in stocks_dir.glob("*.json") if p.name != "index.json"
-                }
-                idx_keys = set(idx_data.keys())
-                for dead_id in sorted(idx_keys - actual_files):
-                    errors.append(f"[DIST] Dead security_id in stocks/index.json: {dead_id}")
-                for missing_id in sorted(actual_files - idx_keys):
-                    errors.append(f"[DIST] Stock detail file missing from stocks/index.json: {missing_id}")
-                for sec_id in idx_data:
-                    stock_path = stocks_dir / f"{sec_id}.json"
-                    if not stock_path.is_file():
-                        continue
-                    try:
-                        s_doc = json.loads(stock_path.read_text(encoding="utf-8"))
-                        hist = s_doc.get("etf_history") or {}
-                        h_dates = sorted(
-                            {r["as_of"] for rows in hist.values() for r in rows}
-                        )
-                        if h_dates and (
-                            s_doc.get("first_seen") != h_dates[0]
-                            or s_doc.get("last_seen") != h_dates[-1]
-                        ):
-                            errors.append(
-                                f"[DIST] first_seen/last_seen mismatch in {sec_id}.json"
-                            )
-                    except Exception:  # noqa: BLE001
-                        pass
-                if meta_path.is_file():
-                    meta_doc = json.loads(meta_path.read_text(encoding="utf-8"))
-                    if meta_doc.get("stock_count") != len(idx_keys):
+    # Verify 4-way synchronization across meta.json, etf summaries, holdings, split indexes, and stock shards
+    active_idx = parsed_by_rel.get("data/stocks/index-active.json")
+    former_idx = parsed_by_rel.get("data/stocks/index-former.json")
+    meta_doc = parsed_by_rel.get("data/meta.json")
+
+    if not isinstance(active_idx, dict):
+        errors.append("[DIST] Missing or invalid data/stocks/index-active.json")
+    if not isinstance(former_idx, dict):
+        errors.append("[DIST] Missing or invalid data/stocks/index-former.json")
+
+    if isinstance(active_idx, dict) and isinstance(former_idx, dict):
+        active_keys = set(active_idx.keys())
+        former_keys = set(former_idx.keys())
+        overlap = active_keys & former_keys
+        if overlap:
+            errors.append(
+                f"[DIST] Overlapping security_ids in index-active/index-former: {sorted(overlap)[:10]}"
+            )
+        for sec_id, entry in active_idx.items():
+            if not (entry.get("current_etfs") or []):
+                errors.append(f"[DIST] index-active entry has empty current_etfs: {sec_id}")
+        for sec_id, entry in former_idx.items():
+            if entry.get("current_etfs"):
+                errors.append(f"[DIST] index-former entry has non-empty current_etfs: {sec_id}")
+
+        idx_keys = active_keys | former_keys
+
+        # Collect all securities stored across stocks/shards/<00..ff>.json
+        shard_docs: dict[str, dict[str, object]] = {}
+        shard_sec_ids: set[str] = set()
+        for rel_dist, doc in parsed_by_rel.items():
+            if not rel_dist.startswith("data/stocks/shards/") or not rel_dist.endswith(".json"):
+                continue
+            shard_name = Path(rel_dist).stem
+            if not isinstance(doc, dict):
+                errors.append(f"[DIST] Shard file is not a JSON object: {rel_dist}")
+                continue
+            shard_docs[shard_name] = doc
+            for sec_id, s_doc in doc.items():
+                expected_shard = stock_shard_id(sec_id)
+                if expected_shard != shard_name:
+                    errors.append(
+                        f"[DIST] Security {sec_id} stored in wrong shard {shard_name} (expected {expected_shard})"
+                    )
+                if sec_id in shard_sec_ids:
+                    errors.append(f"[DIST] Duplicate security_id across shards: {sec_id}")
+                shard_sec_ids.add(sec_id)
+                if isinstance(s_doc, dict):
+                    hist = s_doc.get("etf_history") or {}
+                    h_dates = sorted(
+                        {r["as_of"] for rows in hist.values() for r in rows}
+                    )
+                    if h_dates and (
+                        s_doc.get("first_seen") != h_dates[0]
+                        or s_doc.get("last_seen") != h_dates[-1]
+                    ):
                         errors.append(
-                            f"[DIST] meta.stock_count={meta_doc.get('stock_count')} != index count {len(idx_keys)}"
+                            f"[DIST] first_seen/last_seen mismatch in shard {shard_name} ({sec_id})"
                         )
-                    for etf_m in meta_doc.get("etfs") or []:
-                        eid = etf_m.get("etf_id")
-                        sum_path = DIST_DIR / "data" / "etf" / eid / "summary.json"
-                        if not sum_path.is_file():
-                            errors.append(f"[DIST] Missing summary.json for {eid}")
-                            continue
-                        sum_doc = json.loads(sum_path.read_text(encoding="utf-8"))
-                        dates_map = {d["as_of"]: d for d in sum_doc.get("dates") or []}
-                        latest_as_of = etf_m.get("latest_as_of")
-                        latest_d = dates_map.get(latest_as_of)
-                        if not latest_d:
-                            errors.append(f"[DIST] {eid} summary missing latest_as_of {latest_as_of}")
-                            continue
-                        if latest_d.get("holdings_count") != etf_m.get("latest_holdings_count") or abs(
-                            float(latest_d.get("total_value_usd", 0)) - float(etf_m.get("latest_total_value_usd", 0))
-                        ) > 1.0:
-                            errors.append(f"[DIST] {eid} meta vs summary mismatch on {latest_as_of}")
-                        h_path = DIST_DIR / "data" / "etf" / eid / "holdings" / f"{latest_as_of}.json"
-                        if h_path.is_file():
-                            h_doc = json.loads(h_path.read_text(encoding="utf-8"))
-                            if len(h_doc.get("holdings") or []) != latest_d.get("holdings_count"):
-                                errors.append(
-                                    f"[DIST] {eid} {latest_as_of} summary vs holdings count mismatch"
-                                )
-        except Exception:  # noqa: BLE001
-            pass
+
+        for dead_id in sorted(idx_keys - shard_sec_ids):
+            errors.append(f"[DIST] Dead security_id in stock indexes (missing from shards): {dead_id}")
+        for missing_id in sorted(shard_sec_ids - idx_keys):
+            errors.append(f"[DIST] Security in stock shard missing from stock indexes: {missing_id}")
+
+        if isinstance(meta_doc, dict):
+            if meta_doc.get("stock_count") != len(idx_keys):
+                errors.append(
+                    f"[DIST] meta.stock_count={meta_doc.get('stock_count')} != index count {len(idx_keys)}"
+                )
+            if meta_doc.get("active_stock_count") != len(active_keys):
+                errors.append(
+                    f"[DIST] meta.active_stock_count={meta_doc.get('active_stock_count')} != {len(active_keys)}"
+                )
+            if meta_doc.get("former_stock_count") != len(former_keys):
+                errors.append(
+                    f"[DIST] meta.former_stock_count={meta_doc.get('former_stock_count')} != {len(former_keys)}"
+                )
+            if meta_doc.get("stock_shard_count") != len(shard_docs):
+                errors.append(
+                    f"[DIST] meta.stock_shard_count={meta_doc.get('stock_shard_count')} != {len(shard_docs)}"
+                )
+            for etf_m in meta_doc.get("etfs") or []:
+                eid = etf_m.get("etf_id")
+                sum_doc = parsed_by_rel.get(f"data/etf/{eid}/summary.json")
+                if not isinstance(sum_doc, dict):
+                    errors.append(f"[DIST] Missing summary.json for {eid}")
+                    continue
+                dates_map = {d["as_of"]: d for d in sum_doc.get("dates") or []}
+                latest_as_of = etf_m.get("latest_as_of")
+                latest_d = dates_map.get(latest_as_of)
+                if not latest_d:
+                    errors.append(f"[DIST] {eid} summary missing latest_as_of {latest_as_of}")
+                    continue
+                if latest_d.get("holdings_count") != etf_m.get("latest_holdings_count") or abs(
+                    float(latest_d.get("total_value_usd", 0)) - float(etf_m.get("latest_total_value_usd", 0))
+                ) > 1.0:
+                    errors.append(f"[DIST] {eid} meta vs summary mismatch on {latest_as_of}")
+                h_doc = parsed_by_rel.get(f"data/etf/{eid}/holdings/{latest_as_of}.json")
+                if isinstance(h_doc, dict):
+                    if len(h_doc.get("holdings") or []) != latest_d.get("holdings_count"):
+                        errors.append(
+                            f"[DIST] {eid} {latest_as_of} summary vs holdings count mismatch"
+                        )
 
     return f"OK ({len(json_files)} JSON files)"
 

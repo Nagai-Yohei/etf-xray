@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import time
 from pathlib import Path
@@ -83,6 +84,23 @@ class EdgarClient:
         age_sec = time.time() - path.stat().st_mtime
         return age_sec < (max_age_days * 86400.0)
 
+    @staticmethod
+    def _read_cached_file(path: Path) -> bytes:
+        raw = path.read_bytes()
+        if path.suffix == ".gz":
+            return gzip.decompress(raw)
+        return raw
+
+    def _find_existing_cache(self, cache_path: Path, compress: bool) -> Path | None:
+        """Return the active cache file path (preferring .gz when compress=True, with legacy fallback)."""
+        if compress:
+            gz_path = cache_path.with_suffix(cache_path.suffix + ".gz")
+            if gz_path.is_file():
+                return gz_path
+        if cache_path.is_file():
+            return cache_path
+        return None
+
     def fetch_bytes_with_status(
         self,
         url: str,
@@ -90,19 +108,24 @@ class EdgarClient:
         force_refresh: bool = False,
         offline_only: bool = False,
         max_age_days: float | None = None,
+        compress: bool = False,
     ) -> tuple[bytes, bool]:
         """Fetch raw bytes from URL with disk caching, returning (bytes, changed).
 
         `changed` is True only when a network fetch occurred and the response bytes
-        differed from any previously cached file.
+        differed from any previously cached file. When `compress=True`, new downloads
+        are stored as `.gz` while transparently reading any legacy uncompressed file.
         """
         cache_path = self.cache_dir / cache_rel_path
+        write_path = cache_path.with_suffix(cache_path.suffix + ".gz") if compress else cache_path
         not_found_marker = cache_path.with_suffix(cache_path.suffix + ".404")
+        existing_path = self._find_existing_cache(cache_path, compress=compress)
+
         if not force_refresh:
-            if cache_path.is_file() and (
-                offline_only or self._is_cache_fresh(cache_path, max_age_days)
+            if existing_path is not None and (
+                offline_only or self._is_cache_fresh(existing_path, max_age_days)
             ):
-                return cache_path.read_bytes(), False
+                return self._read_cached_file(existing_path), False
             if not_found_marker.is_file() and (
                 offline_only or self._is_cache_fresh(not_found_marker, max_age_days)
             ):
@@ -110,7 +133,7 @@ class EdgarClient:
             if offline_only:
                 raise RuntimeError(f"SEC EDGAR cache miss in offline mode for {url}")
 
-        old_bytes = cache_path.read_bytes() if cache_path.is_file() else None
+        old_bytes = self._read_cached_file(existing_path) if existing_path is not None else None
         session = self._get_session()
         last_error: Exception | None = None
 
@@ -127,12 +150,16 @@ class EdgarClient:
 
             if response.status_code == 200:
                 data = response.content
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                write_path.parent.mkdir(parents=True, exist_ok=True)
                 if not_found_marker.exists():
                     not_found_marker.unlink()
-                tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-                tmp_path.write_bytes(data)
-                tmp_path.replace(cache_path)
+                disk_bytes = gzip.compress(data, compresslevel=6) if compress else data
+                tmp_path = write_path.with_suffix(write_path.suffix + ".tmp")
+                tmp_path.write_bytes(disk_bytes)
+                tmp_path.replace(write_path)
+                # Remove legacy uncompressed copy once compressed copy is safely in place
+                if compress and cache_path != write_path and cache_path.is_file():
+                    cache_path.unlink()
                 return data, (old_bytes != data)
 
             if response.status_code == 404:
@@ -169,6 +196,7 @@ class EdgarClient:
         force_refresh: bool = False,
         offline_only: bool = False,
         max_age_days: float | None = None,
+        compress: bool = False,
     ) -> bool:
         """Refresh cached file only when missing or older than max_age_days; return True if bytes changed.
 
@@ -176,9 +204,10 @@ class EdgarClient:
         """
         cache_path = self.cache_dir / cache_rel_path
         not_found_marker = cache_path.with_suffix(cache_path.suffix + ".404")
+        existing_path = self._find_existing_cache(cache_path, compress=compress)
         if not force_refresh:
-            if cache_path.is_file() and (
-                offline_only or self._is_cache_fresh(cache_path, max_age_days)
+            if existing_path is not None and (
+                offline_only or self._is_cache_fresh(existing_path, max_age_days)
             ):
                 return False
             if not_found_marker.is_file() and (
@@ -194,6 +223,7 @@ class EdgarClient:
             force_refresh=force_refresh,
             offline_only=offline_only,
             max_age_days=max_age_days,
+            compress=compress,
         )
         return changed
 
@@ -283,6 +313,18 @@ class EdgarClient:
         )
         return payload
 
+    def get_company_facts_mtime(self, cik: int | str) -> float:
+        """Return cache mtime (seconds since epoch) for CIK companyfacts, or 0.0 if missing."""
+        cik10 = normalize_cik(cik)
+        cache_path = self.cache_dir / "companyfacts" / f"CIK{cik10}.json"
+        existing = self._find_existing_cache(cache_path, compress=True)
+        if existing is not None:
+            return existing.stat().st_mtime
+        marker = cache_path.with_suffix(cache_path.suffix + ".404")
+        if marker.is_file():
+            return marker.stat().st_mtime
+        return 0.0
+
     def get_company_facts_with_status(
         self,
         cik: int | str,
@@ -290,7 +332,7 @@ class EdgarClient:
         offline_only: bool = False,
         max_age_days: float | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        """Fetch XBRL companyfacts JSON and return (payload, changed)."""
+        """Fetch XBRL companyfacts JSON (stored gzip-compressed) and return (payload, changed)."""
         cik10 = normalize_cik(cik)
         url = COMPANY_FACTS_URL.format(cik=cik10)
         raw, changed = self.fetch_bytes_with_status(
@@ -299,6 +341,7 @@ class EdgarClient:
             force_refresh=force_refresh,
             offline_only=offline_only,
             max_age_days=max_age_days,
+            compress=True,
         )
         return json.loads(raw.decode("utf-8")), changed
 
@@ -318,6 +361,7 @@ class EdgarClient:
             force_refresh=force_refresh,
             offline_only=offline_only,
             max_age_days=max_age_days,
+            compress=True,
         )
 
     def get_submissions(

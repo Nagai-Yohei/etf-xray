@@ -4,6 +4,7 @@
  * cash flows, ROE, dividend history, valuation multiples, and ETF membership.
  */
 
+import { getStocksIndex } from "./api.js";
 import { destroyAllCharts } from "./charts.js";
 import {
   clearNode,
@@ -140,8 +141,16 @@ export async function renderScreenerView(
   clearNode(root);
 
   const etfIds = (metaData?.etfs || []).map((e) => e.etf_id);
-  const activeTotal = stocksList.filter((s) => (s.current_etfs || []).length > 0).length;
-  const formerTotal = stocksList.length - activeTotal;
+  const activeTotal =
+    metaData?.active_stock_count ??
+    stocksList.filter((s) => (s.current_etfs || []).length > 0).length;
+  const totalCount = metaData?.stock_count ?? stocksList.length;
+  const formerTotal = metaData?.former_stock_count ?? Math.max(0, totalCount - activeTotal);
+
+  let universeStocks = stocksList;
+  let fullUniverseLoaded = universeStocks.length >= totalCount;
+  let loadingFullUniverse = false;
+  let viewUnmounted = false;
 
   const initial = parseScreenerQuery(queryParams, etfIds);
   const validColSet = COLUMN_SETS[initial.colSet] ? initial.colSet : "Overview";
@@ -233,7 +242,7 @@ export async function renderScreenerView(
           el("h1", { className: "page-title", text: "Stock Screener" }),
           el("p", {
             className: "page-subtitle",
-            text: `Screen ${fmtInt(activeTotal)} active (${fmtInt(stocksList.length)} tracked) U.S. stocks held across ${etfIds.length} covered ETFs using SEC XBRL fundamentals, cash flows, and dividend history.`,
+            text: `Screen ${fmtInt(activeTotal)} active (${fmtInt(totalCount)} tracked) U.S. stocks held across ${etfIds.length} covered ETFs using SEC XBRL fundamentals, cash flows, and dividend history.`,
           }),
         ]),
         el("a", {
@@ -294,7 +303,7 @@ export async function renderScreenerView(
 
   const scopeOptions = [
     { id: "active", label: `Active (${fmtInt(activeTotal)})` },
-    { id: "all", label: `All (${fmtInt(stocksList.length)})` },
+    { id: "all", label: `All (${fmtInt(totalCount)})` },
     { id: "former", label: `Former (${fmtInt(formerTotal)})` },
   ];
   const scopeGroup = el(
@@ -843,7 +852,41 @@ export async function renderScreenerView(
   }
 
   function refreshResults() {
-    const filtered = filterStocks(stocksList, state.filters);
+    if (state.filters.scope !== "active" && !fullUniverseLoaded) {
+      if (!loadingFullUniverse) {
+        loadingFullUniverse = true;
+        clearNode(resultsCard);
+        resultsCard.appendChild(
+          el("div", { className: "loading-box", text: "Loading historical securities index..." })
+        );
+        getStocksIndex()
+          .then((fullMap) => {
+            loadingFullUniverse = false;
+            if (viewUnmounted) return;
+            universeStocks = Object.values(fullMap);
+            fullUniverseLoaded = true;
+            refreshResults();
+          })
+          .catch((err) => {
+            loadingFullUniverse = false;
+            if (viewUnmounted) return;
+            clearNode(resultsCard);
+            resultsCard.appendChild(
+              el("div", {
+                className: "error-box",
+                text: `Failed to load historical securities: ${err.message || String(err)}`,
+              })
+            );
+          });
+      }
+      syncFilterTabs();
+      updatePresetHighlight();
+      renderActiveChips();
+      syncUrl();
+      return;
+    }
+
+    const filtered = filterStocks(universeStocks, state.filters);
     const sorted = sortStocks(filtered, state.sortKey, state.sortDir);
     lastMatchedRows = sorted;
     syncFilterTabs();
@@ -856,5 +899,7 @@ export async function renderScreenerView(
 
   syncControlsFromState();
   refreshResults();
-  return null;
+  return () => {
+    viewUnmounted = true;
+  };
 }
