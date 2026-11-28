@@ -587,7 +587,7 @@ export async function renderScreenerView(
         ? activeTotal
         : state.filters.scope === "former"
           ? formerTotal
-          : stocksList.length;
+          : totalCount;
     const share = denom > 0 ? summary.count / denom : 0;
 
     const cards = [

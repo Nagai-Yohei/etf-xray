@@ -65,10 +65,18 @@ export function getEtfSummary(etfId) {
   return fetchJson(`data/etf/${encodeURIComponent(etfId)}/summary.json`);
 }
 
+export function getEtfTenure(etfId) {
+  return fetchJson(`data/etf/${encodeURIComponent(etfId)}/tenure.json`);
+}
+
 export function getEtfHoldings(etfId, asOf) {
   return fetchJson(
     `data/etf/${encodeURIComponent(etfId)}/holdings/${encodeURIComponent(asOf)}.json`
   );
+}
+
+export function getCompareOverview() {
+  return fetchJson("data/compare/overview.json");
 }
 
 export function getActiveStocksIndex() {

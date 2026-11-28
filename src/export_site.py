@@ -2,7 +2,9 @@
 
 Output files:
 - dist/data/meta.json
+- dist/data/compare/overview.json
 - dist/data/etf/<ETF_ID>/summary.json
+- dist/data/etf/<ETF_ID>/tenure.json
 - dist/data/etf/<ETF_ID>/holdings/<AS_OF>.json
 - dist/data/stocks/index-active.json
 - dist/data/stocks/index-former.json
@@ -26,10 +28,97 @@ from src.metrics import compute_etf_dividend_history
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
+def _strip_nulls(obj: Any) -> Any:
+    """Recursively omit dictionary entries whose value is None."""
+    if isinstance(obj, dict):
+        return {k: _strip_nulls(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_strip_nulls(item) for item in obj]
+    return obj
+
+
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    compact = _strip_nulls(payload)
+    text = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
     path.write_text(text, encoding="utf-8")
+
+
+def _build_compare_overview(
+    etf_ids: list[str],
+    latest_holdings_by_etf: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Precompute the N x N ETF overlap matrix and multi-ETF core holdings (held in >= 2 ETFs)."""
+    weight_maps: dict[str, dict[str, float]] = {}
+    by_sec: dict[str, dict[str, Any]] = {}
+
+    for eid in etf_ids:
+        wmap: dict[str, float] = {}
+        for h in latest_holdings_by_etf.get(eid) or []:
+            sid = str(h["security_id"])
+            w = float(h.get("weight") or 0.0)
+            wmap[sid] = w
+            entry = by_sec.get(sid)
+            if entry is None:
+                by_sec[sid] = {
+                    "security_id": sid,
+                    "ticker": h.get("ticker") or sid,
+                    "name": h.get("name") or sid,
+                    "etfs": [eid],
+                    "weights": {eid: round(w, 6)},
+                    "total_weight": w,
+                }
+            else:
+                entry["etfs"].append(eid)
+                entry["weights"][eid] = round(w, 6)
+                entry["total_weight"] += w
+        weight_maps[eid] = wmap
+
+    matrix: dict[str, dict[str, dict[str, Any]]] = {}
+    for a in etf_ids:
+        row: dict[str, dict[str, Any]] = {}
+        map_a = weight_maps[a]
+        for b in etf_ids:
+            if a == b:
+                row[b] = {"overlapWeight": 1.0, "commonCount": len(map_a), "self": True}
+                continue
+            map_b = weight_maps[b]
+            ov = 0.0
+            cnt = 0
+            # Iterate over the smaller holdings map for speed
+            small, large = (map_a, map_b) if len(map_a) <= len(map_b) else (map_b, map_a)
+            for sid, w1 in small.items():
+                w2 = large.get(sid)
+                if w2 is not None:
+                    cnt += 1
+                    ov += w1 if w1 < w2 else w2
+            row[b] = {"overlapWeight": round(ov, 6), "commonCount": cnt, "self": False}
+        matrix[a] = row
+
+    core_holdings: list[dict[str, Any]] = []
+    for entry in by_sec.values():
+        etf_cnt = len(entry["etfs"])
+        if etf_cnt >= 2:
+            core_holdings.append(
+                {
+                    "security_id": entry["security_id"],
+                    "ticker": entry["ticker"],
+                    "name": entry["name"],
+                    "etfs": entry["etfs"],
+                    "weights": entry["weights"],
+                    "etf_count": etf_cnt,
+                    "avg_weight": round(entry["total_weight"] / etf_cnt, 6),
+                }
+            )
+    core_holdings.sort(
+        key=lambda x: (-x["etf_count"], -x["avg_weight"], x["security_id"])
+    )
+
+    return {
+        "etf_ids": etf_ids,
+        "matrix": matrix,
+        "core_holdings": core_holdings,
+    }
 
 
 def _safe_filename(ident: str) -> str:
@@ -84,11 +173,12 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
 
         meta_etfs: list[dict[str, Any]] = []
         etf_membership: dict[str, set[str]] = {}
+        latest_holdings_by_etf: dict[str, list[dict[str, Any]]] = {}
         holdings_file_count = 0
         splits_cache: dict[tuple[str, ...], list[tuple[str, float]]] = {}
 
         # ------------------------------------------------------------
-        # 1. Per-ETF summary.json and holdings/<AS_OF>.json
+        # 1. Per-ETF summary.json, tenure.json, and holdings/<AS_OF>.json
         # ------------------------------------------------------------
         for etf in etfs:
             etf_id = _safe_filename(etf["etf_id"])
@@ -202,6 +292,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                         etf_membership.setdefault(sec_id, set()).add(etf_id)
 
                 if as_of == latest_as_of:
+                    latest_holdings_by_etf[etf_id] = out_holdings
                     latest_top_holdings = [
                         {
                             "security_id": item["security_id"],
@@ -212,6 +303,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                         for item in out_holdings[:5]
                     ]
 
+                date_changes = changes_by_date[as_of]
                 _write_json(
                     data_dir / "etf" / etf_id / "holdings" / f"{as_of}.json",
                     {
@@ -221,6 +313,8 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                         "accession": d_row["accession"],
                         "holdings_count": int(d_row["holdings_count"]),
                         "total_value_usd": round(float(d_row["total_value_usd"]), 2),
+                        "added": date_changes["added"],
+                        "removed": date_changes["removed"],
                         "holdings": out_holdings,
                     },
                 )
@@ -229,7 +323,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
             # Compute estimated annual dividends and portfolio yield per reporting date
             div_history = compute_etf_dividend_history(conn, etf_id, splits_cache=splits_cache)
 
-            # Build summary.json
+            # Build lightweight summary.json (changes live in holdings/<as_of>.json; tenure lives in tenure.json)
             summary_dates = [
                 {
                     "as_of": d["as_of"],
@@ -247,15 +341,6 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     ),
                 }
                 for d in dates
-            ]
-            summary_changes = [
-                {
-                    "as_of": d["as_of"],
-                    "added": changes_by_date[d["as_of"]]["added"],
-                    "removed": changes_by_date[d["as_of"]]["removed"],
-                }
-                for d in dates
-                if changes_by_date[d["as_of"]]["added"] or changes_by_date[d["as_of"]]["removed"]
             ]
 
             tenure_list = sorted(
@@ -277,6 +362,7 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                 ),
                 key=lambda x: (not x["in_latest"], -x["quarters_held"], -(x["latest_weight"] or 0.0)),
             )
+            tenure_current_count = sum(1 for item in tenure_list if item["in_latest"])
 
             _write_json(
                 data_dir / "etf" / etf_id / "summary.json",
@@ -289,7 +375,18 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     "structure": etf["structure"],
                     "latest_as_of": latest_as_of,
                     "dates": summary_dates,
-                    "changes": summary_changes,
+                    "tenure_current_count": tenure_current_count,
+                    "tenure_total_count": len(tenure_list),
+                },
+            )
+            _write_json(
+                data_dir / "etf" / etf_id / "tenure.json",
+                {
+                    "etf_id": etf_id,
+                    "latest_as_of": latest_as_of,
+                    "dates": date_list,
+                    "current_count": tenure_current_count,
+                    "total_count": len(tenure_list),
                     "tenure_map": tenure_list,
                 },
             )
@@ -311,6 +408,15 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     "top_holdings": latest_top_holdings,
                 }
             )
+
+        # ------------------------------------------------------------
+        # 1b. Precomputed compare/overview.json (overlap matrix + core holdings)
+        # ------------------------------------------------------------
+        exported_etf_ids = [e["etf_id"] for e in meta_etfs]
+        _write_json(
+            data_dir / "compare" / "overview.json",
+            _build_compare_overview(exported_etf_ids, latest_holdings_by_etf),
+        )
 
         # ------------------------------------------------------------
         # 2. Individual stock index.json and stocks/<SECURITY_ID>.json

@@ -7,7 +7,7 @@
  * - Multi-ETF core holdings table (stocks held across 3+, 4+, or all ETFs)
  */
 
-import { getEtfHoldings } from "./api.js";
+import { getCompareOverview, getEtfHoldings } from "./api.js";
 import {
   baseChartOptions,
   createChart,
@@ -16,11 +16,7 @@ import {
   fmtAxisPct,
   PALETTE,
 } from "./charts.js";
-import {
-  computeCoreHoldings,
-  computeOverlapMatrix,
-  computePairOverlap,
-} from "./compare-helpers.js";
+import { computePairOverlap } from "./compare-helpers.js";
 import {
   clearNode,
   el,
@@ -75,19 +71,7 @@ export async function renderCompareView(
   const etfById = new Map(etfs.map((e) => [e.etf_id, e]));
   const etfIds = etfs.map((e) => e.etf_id);
 
-  // Load latest holdings for all ETFs in parallel (cached in api.js)
-  const holdingsEntries = await Promise.all(
-    etfs.map(async (etf) => {
-      const doc = await getEtfHoldings(etf.etf_id, etf.latest_as_of);
-      return [etf.etf_id, doc.holdings || []];
-    })
-  );
-  if (isStale()) return null;
-
-  const holdingsByEtf = Object.fromEntries(holdingsEntries);
-  const matrix = computeOverlapMatrix(etfIds, holdingsByEtf);
-
-  // Pick initial pair (default SCHD vs VYM when available)
+  // Pick initial pair (default SCHD vs VYM when available) before fetching holdings
   const defaultA = etfById.has("SCHD") ? "SCHD" : etfIds[0];
   const defaultB = etfById.has("VYM") && defaultA !== "VYM" ? "VYM" : etfIds.find((id) => id !== defaultA);
 
@@ -97,6 +81,27 @@ export async function renderCompareView(
     etfB = etfIds.find((id) => id !== etfA) || etfIds[0];
   }
 
+  // Load precomputed overlap matrix + core holdings, plus ONLY the two selected ETFs' holdings
+  const [overview, docA, docB] = await Promise.all([
+    getCompareOverview(),
+    getEtfHoldings(etfA, etfById.get(etfA).latest_as_of),
+    getEtfHoldings(etfB, etfById.get(etfB).latest_as_of),
+  ]);
+  if (isStale()) return null;
+
+  const holdingsByEtf = {
+    [etfA]: docA.holdings || [],
+    [etfB]: docB.holdings || [],
+  };
+  const matrix = overview.matrix || {};
+  const coreHoldingsAll = (overview.core_holdings || []).map((row) => ({
+    ...row,
+    etfCount: row.etf_count,
+    avgWeight: row.avg_weight,
+    weights: row.weights || {},
+    m: stocksIndex[row.security_id] || {},
+  }));
+
   const state = {
     etfA,
     etfB,
@@ -104,13 +109,27 @@ export async function renderCompareView(
     search: "",
     sortKey: "overlap",
     sortDir: -1,
+    tablePage: 1,
+    tablePageSize: 100,
     tableExpanded: false,
     coreMinEtfs: Math.min(etfIds.length, Math.max(3, etfIds.length - 2)),
+    corePage: 1,
+    corePageSize: 100,
     coreExpanded: false,
   };
 
   let topOverlapChart = null;
   let breakdownChart = null;
+  let pairReqSeq = 0;
+
+  async function ensureHoldingsLoaded(eid) {
+    if (holdingsByEtf[eid]) return holdingsByEtf[eid];
+    const meta = etfById.get(eid);
+    const doc = await getEtfHoldings(eid, meta.latest_as_of);
+    const rows = doc.holdings || [];
+    holdingsByEtf[eid] = rows;
+    return rows;
+  }
 
   function syncUrlAndBackTarget() {
     const targetHash = `#/compare?a=${encodeURIComponent(state.etfA)}&b=${encodeURIComponent(state.etfB)}`;
@@ -123,10 +142,12 @@ export async function renderCompareView(
     }
   }
 
-  function setPair(newA, newB) {
+  async function setPair(newA, newB) {
     if (!etfById.has(newA) || !etfById.has(newB) || newA === newB) return;
+    const reqId = ++pairReqSeq;
     state.etfA = newA;
     state.etfB = newB;
+    state.tablePage = 1;
     state.tableExpanded = false;
     if (state.activeTab === "common") {
       state.sortKey = "overlap";
@@ -136,7 +157,35 @@ export async function renderCompareView(
       state.sortDir = -1;
     }
     syncUrlAndBackTarget();
-    renderAll();
+    renderHeader();
+    renderMatrix();
+
+    const needsFetch = !holdingsByEtf[newA] || !holdingsByEtf[newB];
+    if (needsFetch) {
+      clearNode(tableCard);
+      tableCard.appendChild(
+        el("div", {
+          className: "loading-box",
+          text: `Loading ${newA} and ${newB} holdings...`,
+        })
+      );
+      try {
+        await Promise.all([ensureHoldingsLoaded(newA), ensureHoldingsLoaded(newB)]);
+      } catch (err) {
+        if (isStale() || reqId !== pairReqSeq) return;
+        clearNode(tableCard);
+        tableCard.appendChild(
+          el("div", {
+            className: "error-box",
+            text: `Failed to load holdings for ${newA} vs ${newB}: ${err?.message || String(err)}`,
+          })
+        );
+        return;
+      }
+      if (isStale() || reqId !== pairReqSeq) return;
+    }
+
+    renderPairSections();
   }
 
   clearNode(root);
@@ -229,6 +278,7 @@ export async function renderCompareView(
       ["SCHD", "HDV"],
       ["VIG", "DGRO"],
       ["VIG", "SDY"],
+      ["VOO", "VTI"],
       ["VOO", "QQQ"],
       ["SCHD", "QQQ"],
     ].filter(([a, b]) => etfById.has(a) && etfById.has(b));
@@ -506,6 +556,7 @@ export async function renderCompareView(
       ariaLabel: "Filter comparison table",
       onInput: (e) => {
         state.search = e.target.value;
+        state.tablePage = 1;
         renderTableBody();
       },
     });
@@ -522,6 +573,7 @@ export async function renderCompareView(
                 state.activeTab = t.id;
                 state.sortKey = t.defaultSort;
                 state.sortDir = -1;
+                state.tablePage = 1;
                 state.tableExpanded = false;
                 renderHoldingsTable(ov);
               },
@@ -536,19 +588,12 @@ export async function renderCompareView(
       className: `table-scroll compare-table-scroll${state.tableExpanded ? " expanded" : ""}`,
     });
     const countNoteText = el("span", { className: "text-muted" });
-    const expandBtn = el("button", {
-      type: "button",
-      className: "btn btn-sm",
-      text: state.tableExpanded ? "Compact View" : "Expand All",
-      onClick: () => {
-        state.tableExpanded = !state.tableExpanded;
-        tableWrap.classList.toggle("expanded", state.tableExpanded);
-        expandBtn.textContent = state.tableExpanded ? "Compact View" : "Expand All";
-      },
-    });
-    const metaRow = el("div", { className: "table-meta-row" }, [countNoteText, expandBtn]);
+    const tableActionsSlot = el("div", { className: "toolbar-group" });
+    const paginationSlot = el("div");
+    const metaRow = el("div", { className: "table-meta-row" }, [countNoteText, tableActionsSlot]);
     tableCard.appendChild(metaRow);
     tableCard.appendChild(tableWrap);
+    tableCard.appendChild(paginationSlot);
 
     const columns =
       state.activeTab === "common"
@@ -582,6 +627,9 @@ export async function renderCompareView(
 
     function renderTableBody() {
       clearNode(tableWrap);
+      clearNode(tableActionsSlot);
+      clearNode(paginationSlot);
+
       const sourceRows =
         state.activeTab === "common" ? ov.common : state.activeTab === "onlyA" ? ov.onlyA : ov.onlyB;
       const q = state.search.trim().toLowerCase();
@@ -598,10 +646,69 @@ export async function renderCompareView(
         compareNullable(sortCol.get(a), sortCol.get(b), state.sortDir)
       );
 
-      countNoteText.textContent = `Showing ${fmtInt(sorted.length)} of ${fmtInt(sourceRows.length)} securities — click any row to open fundamentals`;
-      expandBtn.style.display = sorted.length > 8 ? "" : "none";
-      expandBtn.textContent = state.tableExpanded ? "Compact View" : "Expand All";
+      // Paginate rows so large ETF diffs (e.g. VTI ~3,400 unique stocks) never stall DOM rendering
+      const allowAllRows = sorted.length <= 1000;
+      if (state.tablePageSize === 0 && !allowAllRows) {
+        state.tablePageSize = 100;
+      }
+      const effectivePageSize =
+        state.tablePageSize > 0 ? state.tablePageSize : Math.max(1, sorted.length);
+      const totalPages = Math.max(1, Math.ceil(sorted.length / effectivePageSize));
+      if (state.tablePage > totalPages) state.tablePage = totalPages;
+      const startIdx = (state.tablePage - 1) * effectivePageSize;
+      const endIdx = Math.min(sorted.length, startIdx + effectivePageSize);
+      const pageRows = sorted.slice(startIdx, endIdx);
+
+      const rangeDesc =
+        totalPages > 1
+          ? `Showing ${fmtInt(startIdx + 1)}–${fmtInt(endIdx)} of ${fmtInt(sorted.length)}`
+          : `Showing ${fmtInt(sorted.length)} of ${fmtInt(sourceRows.length)}`;
+      countNoteText.textContent = `${rangeDesc} securities — click any row to open fundamentals`;
       tableWrap.classList.toggle("expanded", state.tableExpanded);
+
+      if (sorted.length > 50) {
+        const pageSizeOpts = [
+          { value: 50, label: "50 / page" },
+          { value: 100, label: "100 / page" },
+          { value: 250, label: "250 / page" },
+          ...(allowAllRows ? [{ value: 0, label: "All rows" }] : []),
+        ];
+        tableActionsSlot.appendChild(
+          el(
+            "select",
+            {
+              className: "select-control select-sm",
+              ariaLabel: "Comparison rows per page",
+              onChange: (e) => {
+                state.tablePageSize = Number(e.target.value);
+                state.tablePage = 1;
+                renderTableBody();
+              },
+            },
+            pageSizeOpts.map((opt) =>
+              el("option", {
+                value: String(opt.value),
+                text: opt.label,
+                selected: state.tablePageSize === opt.value,
+              })
+            )
+          )
+        );
+      }
+
+      if (pageRows.length > 8) {
+        tableActionsSlot.appendChild(
+          el("button", {
+            type: "button",
+            className: "btn btn-sm",
+            text: state.tableExpanded ? "Compact View" : "Expand All",
+            onClick: () => {
+              state.tableExpanded = !state.tableExpanded;
+              renderTableBody();
+            },
+          })
+        );
+      }
 
       if (sorted.length === 0) {
         tableWrap.appendChild(el("div", { className: "empty-note", text: "No matching securities." }));
@@ -625,6 +732,7 @@ export async function renderCompareView(
                   state.sortKey = col.key;
                   state.sortDir = col.num ? -1 : 1;
                 }
+                state.tablePage = 1;
                 renderTableBody();
               },
             });
@@ -635,7 +743,7 @@ export async function renderCompareView(
       const tbody = el(
         "tbody",
         {},
-        sorted.map((row) =>
+        pageRows.map((row) =>
           el(
             "tr",
             {
@@ -661,6 +769,37 @@ export async function renderCompareView(
       );
 
       tableWrap.appendChild(el("table", { className: "data-table" }, [thead, tbody]));
+
+      if (totalPages > 1) {
+        paginationSlot.appendChild(
+          el("div", { className: "screener-pagination" }, [
+            el("button", {
+              type: "button",
+              className: "btn btn-sm",
+              text: "← Previous",
+              disabled: state.tablePage <= 1,
+              onClick: () => {
+                state.tablePage = Math.max(1, state.tablePage - 1);
+                renderTableBody();
+              },
+            }),
+            el("span", {
+              className: "text-muted screener-page-indicator",
+              text: `Page ${fmtInt(state.tablePage)} of ${fmtInt(totalPages)} (${fmtInt(sorted.length)} securities)`,
+            }),
+            el("button", {
+              type: "button",
+              className: "btn btn-sm",
+              text: "Next →",
+              disabled: state.tablePage >= totalPages,
+              onClick: () => {
+                state.tablePage = Math.min(totalPages, state.tablePage + 1);
+                renderTableBody();
+              },
+            }),
+          ])
+        );
+      }
     }
 
     renderTableBody();
@@ -694,7 +833,7 @@ export async function renderCompareView(
         el("tr", {}, [
           el("td", {}, [el("span", { className: "ticker-pill", text: rowId })]),
           ...etfIds.map((colId) => {
-            const cell = matrix[rowId][colId];
+            const cell = matrix[rowId]?.[colId] || { overlapWeight: 0, commonCount: 0, self: rowId === colId };
             const isSelected =
               !cell.self &&
               ((state.etfA === rowId && state.etfB === colId) ||
@@ -747,7 +886,7 @@ export async function renderCompareView(
       .filter((v, idx, arr) => v >= 2 && v <= etfIds.length && arr.indexOf(v) === idx)
       .sort((a, b) => b - a);
 
-    const coreList = computeCoreHoldings(etfIds, holdingsByEtf, stocksIndex, state.coreMinEtfs);
+    const coreList = coreHoldingsAll.filter((r) => r.etfCount >= state.coreMinEtfs);
 
     coreCard.appendChild(
       el("div", { className: "card-header compare-table-header" }, [
@@ -768,6 +907,7 @@ export async function renderCompareView(
               text: th === etfIds.length ? `All ${th} ETFs` : `${th}+ ETFs`,
               onClick: () => {
                 state.coreMinEtfs = th;
+                state.corePage = 1;
                 state.coreExpanded = false;
                 renderCoreHoldings();
               },
@@ -782,28 +922,75 @@ export async function renderCompareView(
       return;
     }
 
+    const allowAllCore = coreList.length <= 1000;
+    if (state.corePageSize === 0 && !allowAllCore) {
+      state.corePageSize = 100;
+    }
+    const effectiveCorePageSize =
+      state.corePageSize > 0 ? state.corePageSize : Math.max(1, coreList.length);
+    const coreTotalPages = Math.max(1, Math.ceil(coreList.length / effectiveCorePageSize));
+    if (state.corePage > coreTotalPages) state.corePage = coreTotalPages;
+    const coreStart = (state.corePage - 1) * effectiveCorePageSize;
+    const coreEnd = Math.min(coreList.length, coreStart + effectiveCorePageSize);
+    const corePageRows = coreList.slice(coreStart, coreEnd);
+
     const coreWrap = el("div", {
       className: `table-scroll compare-table-scroll${state.coreExpanded ? " expanded" : ""}`,
     });
 
     if (coreList.length > 8) {
-      const coreExpandBtn = el("button", {
-        type: "button",
-        className: "btn btn-sm",
-        text: state.coreExpanded ? "Compact View" : "Expand All",
-        onClick: () => {
-          state.coreExpanded = !state.coreExpanded;
-          coreWrap.classList.toggle("expanded", state.coreExpanded);
-          coreExpandBtn.textContent = state.coreExpanded ? "Compact View" : "Expand All";
-        },
-      });
+      const coreControls = [];
+      if (coreList.length > 50) {
+        const coreSizeOpts = [
+          { value: 50, label: "50 / page" },
+          { value: 100, label: "100 / page" },
+          { value: 250, label: "250 / page" },
+          ...(allowAllCore ? [{ value: 0, label: "All rows" }] : []),
+        ];
+        coreControls.push(
+          el(
+            "select",
+            {
+              className: "select-control select-sm",
+              ariaLabel: "Core holdings rows per page",
+              onChange: (e) => {
+                state.corePageSize = Number(e.target.value);
+                state.corePage = 1;
+                renderCoreHoldings();
+              },
+            },
+            coreSizeOpts.map((opt) =>
+              el("option", {
+                value: String(opt.value),
+                text: opt.label,
+                selected: state.corePageSize === opt.value,
+              })
+            )
+          )
+        );
+      }
+      coreControls.push(
+        el("button", {
+          type: "button",
+          className: "btn btn-sm",
+          text: state.coreExpanded ? "Compact View" : "Expand All",
+          onClick: () => {
+            state.coreExpanded = !state.coreExpanded;
+            renderCoreHoldings();
+          },
+        })
+      );
+      const coreRangeText =
+        coreTotalPages > 1
+          ? `Showing ${fmtInt(coreStart + 1)}–${fmtInt(coreEnd)} of ${fmtInt(coreList.length)} securities`
+          : `Showing ${fmtInt(coreList.length)} securities`;
       coreCard.appendChild(
         el("div", { className: "table-meta-row" }, [
           el("span", {
             className: "text-muted",
-            text: `Showing ${fmtInt(coreList.length)} securities — scroll inside table or click any row to open fundamentals`,
+            text: `${coreRangeText} — scroll inside table or click any row to open fundamentals`,
           }),
-          coreExpandBtn,
+          el("div", { className: "toolbar-group" }, coreControls),
         ])
       );
     }
@@ -823,7 +1010,7 @@ export async function renderCompareView(
     const tbody = el(
       "tbody",
       {},
-      coreList.map((row) =>
+      corePageRows.map((row) =>
         el(
           "tr",
           {
@@ -852,18 +1039,53 @@ export async function renderCompareView(
 
     coreWrap.appendChild(el("table", { className: "data-table" }, [thead, tbody]));
     coreCard.appendChild(coreWrap);
+
+    if (coreTotalPages > 1) {
+      coreCard.appendChild(
+        el("div", { className: "screener-pagination" }, [
+          el("button", {
+            type: "button",
+            className: "btn btn-sm",
+            text: "← Previous",
+            disabled: state.corePage <= 1,
+            onClick: () => {
+              state.corePage = Math.max(1, state.corePage - 1);
+              renderCoreHoldings();
+            },
+          }),
+          el("span", {
+            className: "text-muted screener-page-indicator",
+            text: `Page ${fmtInt(state.corePage)} of ${fmtInt(coreTotalPages)} (${fmtInt(coreList.length)} securities)`,
+          }),
+          el("button", {
+            type: "button",
+            className: "btn btn-sm",
+            text: "Next →",
+            disabled: state.corePage >= coreTotalPages,
+            onClick: () => {
+              state.corePage = Math.min(coreTotalPages, state.corePage + 1);
+              renderCoreHoldings();
+            },
+          }),
+        ])
+      );
+    }
   }
 
-  function renderAll() {
+  function renderPairSections() {
     const ov = computePairOverlap(
       holdingsByEtf[state.etfA] || [],
       holdingsByEtf[state.etfB] || [],
       stocksIndex
     );
-    renderHeader();
     renderKpis(ov);
     renderCharts(ov);
     renderHoldingsTable(ov);
+  }
+
+  function renderAll() {
+    renderHeader();
+    renderPairSections();
     renderMatrix();
     renderCoreHoldings();
   }

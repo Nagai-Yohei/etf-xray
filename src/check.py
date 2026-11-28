@@ -576,6 +576,43 @@ def check_dist_json(errors: list[str]) -> str:
                         errors.append(
                             f"[DIST] {eid} {latest_as_of} summary vs holdings count mismatch"
                         )
+                    if len(h_doc.get("added") or []) != int(latest_d.get("added_count") or 0):
+                        errors.append(
+                            f"[DIST] {eid} {latest_as_of} summary vs holdings added count mismatch"
+                        )
+                    if len(h_doc.get("removed") or []) != int(latest_d.get("removed_count") or 0):
+                        errors.append(
+                            f"[DIST] {eid} {latest_as_of} summary vs holdings removed count mismatch"
+                        )
+                tenure_doc = parsed_by_rel.get(f"data/etf/{eid}/tenure.json")
+                if not isinstance(tenure_doc, dict):
+                    errors.append(f"[DIST] Missing tenure.json for {eid}")
+                else:
+                    t_rows = tenure_doc.get("tenure_map") or []
+                    if len(t_rows) != sum_doc.get("tenure_total_count"):
+                        errors.append(
+                            f"[DIST] {eid} summary vs tenure.json total_count mismatch"
+                        )
+                    if tenure_doc.get("current_count") != latest_d.get("holdings_count"):
+                        errors.append(
+                            f"[DIST] {eid} tenure.json current_count != latest holdings_count"
+                        )
+
+            compare_doc = parsed_by_rel.get("data/compare/overview.json")
+            if not isinstance(compare_doc, dict):
+                errors.append("[DIST] Missing or invalid data/compare/overview.json")
+            else:
+                meta_etf_ids = [e.get("etf_id") for e in (meta_doc.get("etfs") or [])]
+                if compare_doc.get("etf_ids") != meta_etf_ids:
+                    errors.append("[DIST] compare/overview.json etf_ids mismatch with meta.json")
+                mat = compare_doc.get("matrix") or {}
+                for etf_m in meta_doc.get("etfs") or []:
+                    eid = etf_m.get("etf_id")
+                    self_cell = (mat.get(eid) or {}).get(eid)
+                    if not isinstance(self_cell, dict) or self_cell.get("commonCount") != etf_m.get("latest_holdings_count"):
+                        errors.append(
+                            f"[DIST] compare/overview.json matrix self count mismatch for {eid}"
+                        )
 
     return f"OK ({len(json_files)} JSON files)"
 

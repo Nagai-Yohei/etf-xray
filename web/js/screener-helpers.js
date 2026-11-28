@@ -357,7 +357,7 @@ export function computeScreenerSummary(rows) {
     medianYield: medianOf(dividendPayers.map((r) => r.ttm_yield)),
     medianFcfCagr5y: medianOf(rows.map((r) => r.fcf_cagr_5y)),
     medianRoe5y: medianOf(rows.map((r) => r.roe_5y_median)),
-    medianPe: medianOf(rows.filter((r) => r.pe_ratio !== null && r.pe_ratio > 0).map((r) => r.pe_ratio)),
+    medianPe: medianOf(rows.filter((r) => r.pe_ratio != null && r.pe_ratio > 0).map((r) => r.pe_ratio)),
     medianRoic: medianOf(rows.map((r) => r.roic)),
   };
 }
@@ -498,11 +498,13 @@ export function parseScreenerQuery(params, validEtfIds = []) {
   return { filters, sortKey, sortDir, colSet };
 }
 
+const SAFE_NEGATIVE_NUM_RE = /^-\d+(?:\.\d+)?$/;
+
 function escapeCsvCell(val) {
   if (val === null || val === undefined) return "";
   let str = String(val);
-  // Mitigate spreadsheet formula injection when opened in Excel / Google Sheets
-  if (/^[=+\-@\t\r]/.test(str)) {
+  // Mitigate spreadsheet formula injection while preserving plain negative numbers (e.g. -12.34)
+  if (/^[=+\-@\t\r]/.test(str) && !SAFE_NEGATIVE_NUM_RE.test(str)) {
     str = `'${str}`;
   }
   if (/[",\r\n]/.test(str)) {

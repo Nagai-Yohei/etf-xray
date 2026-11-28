@@ -799,6 +799,13 @@ a:hover {
   color: var(--text-muted);
 }
 
+.tenure-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
 /* Stock View */
 .back-row {
   margin-bottom: 12px;

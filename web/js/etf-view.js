@@ -10,6 +10,7 @@ import {
   getActiveStocksIndex,
   getEtfHoldings,
   getEtfSummary,
+  getEtfTenure,
   getStocksIndex,
 } from "./api.js";
 import {
@@ -66,7 +67,14 @@ export async function renderEtfView(
   const dateList = summary.dates.map((d) => d.as_of);
   let selectedAsOf =
     initialAsOf && dateList.includes(initialAsOf) ? initialAsOf : summary.latest_as_of;
-  const currentTenureCount = summary.tenure_map.filter((x) => x.in_latest).length;
+  const currentTenureCount =
+    summary.tenure_current_count ??
+    (Array.isArray(summary.tenure_map)
+      ? summary.tenure_map.filter((x) => x.in_latest).length
+      : summary.dates[summary.dates.length - 1]?.holdings_count || 0);
+  const totalTenureCount =
+    summary.tenure_total_count ??
+    (Array.isArray(summary.tenure_map) ? summary.tenure_map.length : currentTenureCount);
 
   const state = {
     visibleCols: loadSavedColumns(),
@@ -79,6 +87,9 @@ export async function renderEtfView(
     tableExpanded: false,
     popoverOpen: false,
     tenureFilter: currentTenureCount > 600 ? "top120" : "current",
+    tenureData: Array.isArray(summary.tenure_map) ? summary.tenure_map : null,
+    tenureLoading: false,
+    tenureError: null,
     holdingsData: null,
   };
 
@@ -127,10 +138,10 @@ export async function renderEtfView(
   root.appendChild(snapshotZone);
   root.appendChild(historyZone);
 
-  const changesByDate = new Map(summary.changes.map((c) => [c.as_of, c]));
   const dateMetaMap = new Map(summary.dates.map((d) => [d.as_of, d]));
   let divChartInst = null;
   let turnChartInst = null;
+  let tenureObserver = null;
 
   function renderTopHeader() {
     clearNode(topHeaderContainer);
@@ -156,10 +167,17 @@ export async function renderEtfView(
     const reqId = ++dateReqSeq;
     selectedAsOf = asOf;
     state.page = 1;
-    if (typeof onDateChange === "function") {
-      onDateChange(selectedAsOf, selectedAsOf === summary.latest_as_of);
+    const isLatest = selectedAsOf === summary.latest_as_of;
+    const targetHash = isLatest
+      ? `#/etf/${encodeURIComponent(etfId)}`
+      : `#/etf/${encodeURIComponent(etfId)}?as_of=${encodeURIComponent(selectedAsOf)}`;
+    if (window.location.hash !== targetHash) {
+      window.history.replaceState(null, "", targetHash);
     }
-    const needsFullIndex = !fullIndexLoaded && asOf !== summary.latest_as_of;
+    if (typeof onDateChange === "function") {
+      onDateChange(selectedAsOf, isLatest);
+    }
+    const needsFullIndex = !fullIndexLoaded && !isLatest;
     const [nextHoldings, nextFullIndex] = await Promise.all([
       getEtfHoldings(etfId, asOf),
       needsFullIndex ? getStocksIndex() : Promise.resolve(null),
@@ -236,7 +254,8 @@ export async function renderEtfView(
     clearNode(kpiContainer);
     const hd = state.holdingsData;
     const dMeta = dateMetaMap.get(selectedAsOf);
-    const ch = changesByDate.get(selectedAsOf) || { added: [], removed: [] };
+    const addedCount = Array.isArray(hd.added) ? hd.added.length : dMeta?.added_count || 0;
+    const removedCount = Array.isArray(hd.removed) ? hd.removed.length : dMeta?.removed_count || 0;
 
     const estYield = dMeta?.est_yield ?? null;
     const estDiv = dMeta?.est_annual_dividends_usd ?? null;
@@ -262,7 +281,7 @@ export async function renderEtfView(
       },
       {
         label: "Quarter Turnover",
-        value: `+${ch.added.length} / -${ch.removed.length}`,
+        value: `+${addedCount} / -${removedCount}`,
         sub:
           selectedAsOf === dateList[0]
             ? "Initial quarter in dataset"
@@ -286,10 +305,106 @@ export async function renderEtfView(
     }
   }
 
-  function renderHoldingsCard() {
-    clearNode(tableCard);
-    const hd = state.holdingsData;
+  // Persistent holdings table layout (keeps filterInput mounted so typing never jumps cursor)
+  const tableHeaderSlot = el("div", { className: "card-header" });
+  const leftToolbarSlot = el("div", { className: "toolbar-group" });
+  const rightActionsSlot = el("div", { className: "toolbar-group" });
+  const tableNoteSlot = el("div");
+  const tableBodySlot = el("div");
+
+  const filterInput = el("input", {
+    type: "search",
+    className: "filter-input",
+    placeholder: "Filter holdings...",
+    ariaLabel: "Filter holdings by ticker or company",
+    onInput: (e) => {
+      state.filterText = e.target.value;
+      state.page = 1;
+      renderHoldingsTable();
+    },
+  });
+
+  tableCard.appendChild(tableHeaderSlot);
+  tableCard.appendChild(
+    el("div", { className: "toolbar" }, [
+      leftToolbarSlot,
+      el("div", { className: "toolbar-group" }, [filterInput, rightActionsSlot]),
+    ])
+  );
+  tableCard.appendChild(tableNoteSlot);
+  tableCard.appendChild(tableBodySlot);
+
+  function renderHoldingsControls() {
+    clearNode(leftToolbarSlot);
     const activePreset = detectActivePreset(state.visibleCols);
+
+    for (const name of Object.keys(COLUMN_PRESETS)) {
+      leftToolbarSlot.appendChild(
+        el("button", {
+          type: "button",
+          className: `btn btn-sm${activePreset === name ? " btn-active" : ""}`,
+          text: name,
+          onClick: () => {
+            state.visibleCols = new Set(COLUMN_PRESETS[name]);
+            saveColumns(state.visibleCols);
+            renderHoldingsCard();
+          },
+        })
+      );
+    }
+
+    const colPopover = el("div", {
+      className: `col-popover${state.popoverOpen ? "" : " hidden"}`,
+    });
+    for (const groupName of ["Dividend", "Valuation", "Fundamentals"]) {
+      colPopover.appendChild(
+        el("div", { className: "col-popover-title", text: `${groupName} (latest SEC)` })
+      );
+      const grid = el("div", { className: "col-check-grid" });
+      for (const col of OPTIONAL_COLUMNS.filter((c) => c.group === groupName)) {
+        const checkbox = el("input", {
+          type: "checkbox",
+          checked: state.visibleCols.has(col.key),
+          onChange: (e) => {
+            if (e.target.checked) {
+              state.visibleCols.add(col.key);
+            } else {
+              state.visibleCols.delete(col.key);
+            }
+            saveColumns(state.visibleCols);
+            renderHoldingsCard();
+          },
+        });
+        grid.appendChild(el("label", { className: "col-check-label" }, [checkbox, col.label]));
+      }
+      colPopover.appendChild(grid);
+    }
+
+    leftToolbarSlot.appendChild(
+      el("div", { className: "col-menu-wrap" }, [
+        el("button", {
+          type: "button",
+          className: `btn btn-sm${state.popoverOpen ? " btn-active" : ""}`,
+          text: `Columns (${state.visibleCols.size})`,
+          onClick: (e) => {
+            e.stopPropagation();
+            state.popoverOpen = !state.popoverOpen;
+            renderHoldingsControls();
+          },
+        }),
+        colPopover,
+      ])
+    );
+  }
+
+  function renderHoldingsTable() {
+    clearNode(tableHeaderSlot);
+    clearNode(rightActionsSlot);
+    clearNode(tableNoteSlot);
+    clearNode(tableBodySlot);
+
+    const hd = state.holdingsData;
+    if (!hd) return;
     const activeOptCols = OPTIONAL_COLUMNS.filter((c) => state.visibleCols.has(c.key));
 
     // Build & filter rows
@@ -352,7 +467,7 @@ export async function renderEtfView(
         state.sortDir = defaultDir;
       }
       state.page = 1;
-      renderHoldingsCard();
+      renderHoldingsTable();
     }
 
     function sortMark(key) {
@@ -378,91 +493,18 @@ export async function renderEtfView(
         : `${fmtInt(rows.length)} of ${fmtInt(hd.holdings.length)}`;
 
     // Header
-    tableCard.appendChild(
-      el("div", { className: "card-header" }, [
-        el("h2", {
-          className: "card-title",
-          text: `Holdings (${rangeLabel}) · ${hd.as_of}`,
-        }),
-        el("span", {
-          className: "text-muted",
-          text: "Click any row to open Stock View (annual SEC financials & ETF history)",
-        }),
-      ])
-    );
-
-    // Preset & column customization toolbar
-    const presetButtons = Object.keys(COLUMN_PRESETS).map((name) =>
-      el("button", {
-        type: "button",
-        className: `btn btn-sm${activePreset === name ? " btn-active" : ""}`,
-        text: name,
-        onClick: () => {
-          state.visibleCols = new Set(COLUMN_PRESETS[name]);
-          saveColumns(state.visibleCols);
-          renderHoldingsCard();
-        },
+    tableHeaderSlot.appendChild(
+      el("h2", {
+        className: "card-title",
+        text: `Holdings (${rangeLabel}) · ${hd.as_of}`,
       })
     );
-
-    const colPopover = el("div", {
-      className: `col-popover${state.popoverOpen ? "" : " hidden"}`,
-    });
-    for (const groupName of ["Dividend", "Valuation", "Fundamentals"]) {
-      colPopover.appendChild(
-        el("div", { className: "col-popover-title", text: `${groupName} (latest SEC)` })
-      );
-      const grid = el("div", { className: "col-check-grid" });
-      for (const col of OPTIONAL_COLUMNS.filter((c) => c.group === groupName)) {
-        const checkbox = el("input", {
-          type: "checkbox",
-          checked: state.visibleCols.has(col.key),
-          onChange: (e) => {
-            if (e.target.checked) {
-              state.visibleCols.add(col.key);
-            } else {
-              state.visibleCols.delete(col.key);
-            }
-            saveColumns(state.visibleCols);
-            renderHoldingsCard();
-          },
-        });
-        grid.appendChild(el("label", { className: "col-check-label" }, [checkbox, col.label]));
-      }
-      colPopover.appendChild(grid);
-    }
-
-    const colMenuWrap = el("div", { className: "col-menu-wrap" }, [
-      el("button", {
-        type: "button",
-        className: `btn btn-sm${state.popoverOpen ? " btn-active" : ""}`,
-        text: `Columns (${state.visibleCols.size})`,
-        onClick: (e) => {
-          e.stopPropagation();
-          state.popoverOpen = !state.popoverOpen;
-          renderHoldingsCard();
-        },
-      }),
-      colPopover,
-    ]);
-
-    const filterInput = el("input", {
-      type: "search",
-      className: "filter-input",
-      placeholder: "Filter holdings...",
-      value: state.filterText,
-      onInput: (e) => {
-        state.filterText = e.target.value;
-        state.page = 1;
-        renderHoldingsCard();
-        // Preserve input focus across re-renders
-        const nextInput = tableCard.querySelector(".filter-input");
-        if (nextInput) {
-          nextInput.focus();
-          nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
-        }
-      },
-    });
+    tableHeaderSlot.appendChild(
+      el("span", {
+        className: "text-muted",
+        text: "Click any row to open Stock View (annual SEC financials & ETF history)",
+      })
+    );
 
     const newOnlyBtn = el("button", {
       type: "button",
@@ -471,7 +513,7 @@ export async function renderEtfView(
       onClick: () => {
         state.onlyNew = !state.onlyNew;
         state.page = 1;
-        renderHoldingsCard();
+        renderHoldingsTable();
       },
     });
 
@@ -489,7 +531,7 @@ export async function renderEtfView(
         onChange: (e) => {
           state.pageSize = Number(e.target.value);
           state.page = 1;
-          renderHoldingsCard();
+          renderHoldingsTable();
         },
       },
       pageSizeOpts.map((opt) =>
@@ -507,20 +549,17 @@ export async function renderEtfView(
       text: state.tableExpanded ? "Compact View" : "Expand All",
       onClick: () => {
         state.tableExpanded = !state.tableExpanded;
-        renderHoldingsCard();
+        renderHoldingsTable();
       },
     });
 
-    tableCard.appendChild(
-      el("div", { className: "toolbar" }, [
-        el("div", { className: "toolbar-group" }, [...presetButtons, colMenuWrap]),
-        el("div", { className: "toolbar-group" }, [filterInput, newOnlyBtn, pageSizeSel, expandBtn]),
-      ])
-    );
+    rightActionsSlot.appendChild(newOnlyBtn);
+    rightActionsSlot.appendChild(pageSizeSel);
+    rightActionsSlot.appendChild(expandBtn);
 
     const hasNonPriceOptCol = activeOptCols.some((c) => c.key !== "price");
     if (hasNonPriceOptCol && selectedAsOf !== summary.latest_as_of) {
-      tableCard.appendChild(
+      tableNoteSlot.appendChild(
         el("div", {
           className: "table-note-bar",
           text:
@@ -593,7 +632,7 @@ export async function renderEtfView(
       }
     }
 
-    tableCard.appendChild(
+    tableBodySlot.appendChild(
       el(
         "div",
         {
@@ -604,7 +643,7 @@ export async function renderEtfView(
     );
 
     if (totalPages > 1) {
-      tableCard.appendChild(
+      tableBodySlot.appendChild(
         el("div", { className: "screener-pagination" }, [
           el("button", {
             type: "button",
@@ -613,7 +652,7 @@ export async function renderEtfView(
             disabled: state.page <= 1,
             onClick: () => {
               state.page = Math.max(1, state.page - 1);
-              renderHoldingsCard();
+              renderHoldingsTable();
             },
           }),
           el("span", {
@@ -627,7 +666,7 @@ export async function renderEtfView(
             disabled: state.page >= totalPages,
             onClick: () => {
               state.page = Math.min(totalPages, state.page + 1);
-              renderHoldingsCard();
+              renderHoldingsTable();
             },
           }),
         ])
@@ -635,9 +674,18 @@ export async function renderEtfView(
     }
   }
 
+  function renderHoldingsCard() {
+    renderHoldingsControls();
+    renderHoldingsTable();
+  }
+
   function renderChangesCard() {
     clearNode(changesCard);
-    const ch = changesByDate.get(selectedAsOf) || { added: [], removed: [] };
+    const hd = state.holdingsData || {};
+    const ch = {
+      added: Array.isArray(hd.added) ? hd.added : [],
+      removed: Array.isArray(hd.removed) ? hd.removed : [],
+    };
 
     changesCard.appendChild(
       el("div", { className: "card-header" }, [
@@ -714,7 +762,9 @@ export async function renderEtfView(
       );
       turnChartInst.update("none");
     }
-    renderTenureMapCard();
+    if (state.tenureData) {
+      renderTenureMapCard();
+    }
   }
 
   function renderDividendChartCard() {
@@ -860,11 +910,96 @@ export async function renderEtfView(
     });
   }
 
+  async function loadTenureData() {
+    if (state.tenureData || state.tenureLoading) return;
+    state.tenureLoading = true;
+    state.tenureError = null;
+    renderTenureMapCard();
+    try {
+      const doc = await getEtfTenure(etfId);
+      if (isStale()) return;
+      state.tenureData = Array.isArray(doc?.tenure_map) ? doc.tenure_map : [];
+      state.tenureLoading = false;
+      renderTenureMapCard();
+    } catch (err) {
+      if (isStale()) return;
+      state.tenureLoading = false;
+      state.tenureError = err?.message || String(err);
+      renderTenureMapCard();
+    }
+  }
+
   function renderTenureMapCard() {
     clearNode(tenureCard);
 
+    const allTenureRows = state.tenureData;
+    const totalCountLabel = allTenureRows ? allTenureRows.length : totalTenureCount;
+    const filterBtns = [
+      { id: "current", label: `Current (${fmtInt(currentTenureCount)})` },
+      { id: "top120", label: "Longest Held (Top 120)" },
+      { id: "all", label: `All Historical (${fmtInt(totalCountLabel)})` },
+    ].map((opt) =>
+      el("button", {
+        type: "button",
+        className: `btn btn-sm${state.tenureFilter === opt.id ? " btn-active" : ""}`,
+        text: opt.label,
+        onClick: () => {
+          state.tenureFilter = opt.id;
+          if (!state.tenureData) {
+            loadTenureData();
+          } else {
+            renderTenureMapCard();
+          }
+        },
+      })
+    );
+
+    tenureCard.appendChild(
+      el("div", { className: "card-header" }, [
+        el("h2", { className: "card-title", text: "Holding Tenure Map" }),
+        el("div", { className: "toolbar-group" }, filterBtns),
+      ])
+    );
+
+    if (!allTenureRows) {
+      const placeholder = state.tenureError
+        ? el("div", { className: "card-body tenure-placeholder" }, [
+            el("div", {
+              className: "error-box",
+              text: `Failed to load holding tenure map: ${state.tenureError}`,
+            }),
+            el("div", { className: "toolbar-group" }, [
+              el("button", {
+                type: "button",
+                className: "btn btn-sm",
+                text: "Retry Loading Tenure Map",
+                onClick: () => loadTenureData(),
+              }),
+            ]),
+          ])
+        : el("div", { className: "card-body" }, [
+            el("div", { className: "loading-box tenure-placeholder" }, [
+              el("div", {
+                text: state.tenureLoading
+                  ? `Loading ${etfId} holding tenure history (${fmtInt(totalTenureCount)} securities)...`
+                  : `Holding tenure heatmap loads automatically when scrolled into view (${fmtInt(totalTenureCount)} securities).`,
+              }),
+              !state.tenureLoading
+                ? el("button", {
+                    type: "button",
+                    className: "btn btn-sm",
+                    text: "Load Tenure Map Now",
+                    onClick: () => loadTenureData(),
+                  })
+                : null,
+            ]),
+          ]);
+      tenureCard.appendChild(placeholder);
+      return;
+    }
+
     const MAX_TENURE_CANVAS_ROWS = 1500;
-    let items = summary.tenure_map;
+    let items = allTenureRows;
     if (state.tenureFilter === "current") {
       items = items.filter((x) => x.in_latest);
     } else if (state.tenureFilter === "top120") {
@@ -878,22 +1013,6 @@ export async function renderEtfView(
     if (isCapped) {
       items = items.slice(0, MAX_TENURE_CANVAS_ROWS);
     }
-
-    const filterBtns = [
-      { id: "current", label: `Current (${currentTenureCount})` },
-      { id: "top120", label: "Longest Held (Top 120)" },
-      { id: "all", label: `All Historical (${summary.tenure_map.length})` },
-    ].map((opt) =>
-      el("button", {
-        type: "button",
-        className: `btn btn-sm${state.tenureFilter === opt.id ? " btn-active" : ""}`,
-        text: opt.label,
-        onClick: () => {
-          state.tenureFilter = opt.id;
-          renderTenureMapCard();
-        },
-      })
-    );
 
     const defaultStatusText = isCapped
       ? `Showing top ${fmtInt(MAX_TENURE_CANVAS_ROWS)} of ${fmtInt(totalFiltered)} constituents (sorted by tenure & weight). Hover to inspect; click to open Stock View.`
@@ -1089,12 +1208,6 @@ export async function renderEtfView(
     });
 
     tenureCard.appendChild(
-      el("div", { className: "card-header" }, [
-        el("h2", { className: "card-title", text: "Holding Tenure Map" }),
-        el("div", { className: "toolbar-group" }, filterBtns),
-      ])
-    );
-    tenureCard.appendChild(
       el("div", { className: "card-body" }, [
         el("div", { className: "tenure-canvas-wrap" }, [headerCanvas, canvas]),
         statusLine,
@@ -1106,7 +1219,7 @@ export async function renderEtfView(
   const closePopoverHandler = (ev) => {
     if (state.popoverOpen && !ev.target.closest(".col-menu-wrap")) {
       state.popoverOpen = false;
-      renderHoldingsCard();
+      renderHoldingsControls();
     }
   };
   document.addEventListener("click", closePopoverHandler, { once: false });
@@ -1114,9 +1227,36 @@ export async function renderEtfView(
   renderTopHeader();
   renderDividendChartCard();
   renderTurnoverChartCard();
+  renderTenureMapCard();
   await selectDate(selectedAsOf);
+  if (isStale()) {
+    document.removeEventListener("click", closePopoverHandler);
+    return null;
+  }
+
+  if (!state.tenureData) {
+    if (typeof window.IntersectionObserver === "function") {
+      tenureObserver = new window.IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            tenureObserver?.disconnect();
+            tenureObserver = null;
+            loadTenureData();
+          }
+        },
+        { rootMargin: "350px 0px" }
+      );
+      tenureObserver.observe(tenureCard);
+    } else {
+      loadTenureData();
+    }
+  }
 
   return () => {
     document.removeEventListener("click", closePopoverHandler);
+    if (tenureObserver) {
+      tenureObserver.disconnect();
+      tenureObserver = null;
+    }
   };
 }
