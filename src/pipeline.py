@@ -253,7 +253,7 @@ def update_fundamentals(
             conn.execute("UPDATE securities SET cik = NULL WHERE security_id = ?", (sec_id,))
 
     # Purge stale XBRL rows for any security whose CIK was cleared
-    for tbl in ("financials_annual", "financials_quarterly", "financials_ttm"):
+    for tbl in ("financials_annual", "financials_quarterly", "financials_ttm", "split_events"):
         conn.execute(
             f"""
             DELETE FROM {tbl}
@@ -275,7 +275,8 @@ def update_fundamentals(
 
     # Extract once per CIK chain and share across dual-class securities (e.g. CWEN / CWEN.A)
     facts_cache: dict[
-        tuple[str, ...], tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]
+        tuple[str, ...],
+        tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, list[tuple[str, float]]],
     ] = {}
     ok_count = 0
     miss_count = 0
@@ -301,14 +302,15 @@ def update_fundamentals(
                 ann_rows, splits = extract_annual_financials(merged_facts)
                 q_rows = extract_quarterly_financials(merged_facts, ann_rows, splits)
                 ttm_row = extract_ttm_financials(merged_facts, ann_rows)
-                facts_cache[cik_chain] = (ann_rows, q_rows, ttm_row)
+                facts_cache[cik_chain] = (ann_rows, q_rows, ttm_row, splits)
             else:
-                facts_cache[cik_chain] = ([], [], None)
+                facts_cache[cik_chain] = ([], [], None, [])
 
-        ann_rows, q_rows, ttm_row = facts_cache[cik_chain]
+        ann_rows, q_rows, ttm_row, splits = facts_cache[cik_chain]
         conn.execute("DELETE FROM financials_annual WHERE security_id = ?", (sec_id,))
         conn.execute("DELETE FROM financials_quarterly WHERE security_id = ?", (sec_id,))
         conn.execute("DELETE FROM financials_ttm WHERE security_id = ?", (sec_id,))
+        conn.execute("DELETE FROM split_events WHERE security_id = ?", (sec_id,))
 
         if not ann_rows:
             miss_count += 1
@@ -428,6 +430,15 @@ def update_fundamentals(
                     ttm_row["total_equity"],
                     ttm_row["shares_outstanding"],
                 ),
+            )
+
+        if splits:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO split_events (security_id, filed, ratio)
+                VALUES (?, ?, ?)
+                """,
+                [(sec_id, sp_filed, float(sp_ratio)) for sp_filed, sp_ratio in splits],
             )
 
         ok_count += 1

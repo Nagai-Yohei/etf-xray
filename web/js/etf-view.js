@@ -1048,6 +1048,19 @@ export async function renderEtfView(
     }
     const selColIdx = dateList.indexOf(selectedAsOf);
 
+    const dark = document.documentElement?.dataset?.theme === "dark";
+    const cHeaderBg = dark ? "#18181b" : "#f4f4f5";
+    const cBodyBg = dark ? "#111113" : "#ffffff";
+    const cStripeBg = dark ? "rgba(255, 255, 255, 0.03)" : "rgba(244, 244, 245, 0.7)";
+    const cHeaderText = dark ? "#a1a1aa" : "#52525b";
+    const cSelBand = dark ? "rgba(96, 165, 250, 0.16)" : "rgba(29, 78, 216, 0.10)";
+    const cSelBar = dark ? "#60a5fa" : "#1d4ed8";
+    const cActiveTicker = dark ? "#f4f4f5" : "#18181b";
+    const cFormerTicker = dark ? "#71717a" : "#71717a";
+    const cActiveCell = dark ? "#60a5fa" : "#2563eb";
+    const cFormerCell = dark ? "#52525b" : "#a1a1aa";
+    const cGuide = dark ? "rgba(161, 161, 170, 0.18)" : "rgba(113, 113, 122, 0.22)";
+
     // 1. Sticky year-header canvas (stays pinned at top during vertical scroll)
     const headerCanvas = el("canvas", {
       className: "tenure-header-canvas",
@@ -1060,23 +1073,23 @@ export async function renderEtfView(
 
     const hctx = headerCanvas.getContext("2d");
     hctx.scale(headerDpr, headerDpr);
-    hctx.fillStyle = "#f8fafc";
+    hctx.fillStyle = cHeaderBg;
     hctx.fillRect(0, 0, totalW, headerH);
 
     if (selColIdx >= 0) {
       const sx = labelWidth + countWidth + selColIdx * cellW;
-      hctx.fillStyle = "rgba(37, 99, 235, 0.16)";
+      hctx.fillStyle = cSelBand;
       hctx.fillRect(sx, 0, cellW, headerH);
-      hctx.fillStyle = "#2563eb";
+      hctx.fillStyle = cSelBar;
       hctx.fillRect(sx, headerH - 2, cellW, 2);
     }
 
     hctx.font = "700 10px -apple-system, BlinkMacSystemFont, sans-serif";
-    hctx.fillStyle = "#475569";
+    hctx.fillStyle = cHeaderText;
     hctx.fillText("Ticker", 8, 18);
     hctx.fillText("Qtrs", labelWidth + 2, 18);
 
-    hctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+    hctx.strokeStyle = cGuide;
     hctx.lineWidth = 1;
     for (let yi = 0; yi < yearStarts.length; yi++) {
       const ys = yearStarts[yi];
@@ -1092,7 +1105,7 @@ export async function renderEtfView(
       hctx.lineTo(x + 0.5, headerH);
       hctx.stroke();
 
-      hctx.fillStyle = "#475569";
+      hctx.fillStyle = cHeaderText;
       hctx.font = "700 10px -apple-system, BlinkMacSystemFont, sans-serif";
       const fullW = hctx.measureText(ys.year).width;
       if (availW >= fullW + 4) {
@@ -1120,12 +1133,12 @@ export async function renderEtfView(
 
     const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = cBodyBg;
     ctx.fillRect(0, 0, totalW, bodyH);
 
     // Draw vertical highlight band for the selected reporting date
     if (selColIdx >= 0) {
-      ctx.fillStyle = "rgba(37, 99, 235, 0.12)";
+      ctx.fillStyle = cSelBand;
       ctx.fillRect(labelWidth + countWidth + selColIdx * cellW, 0, cellW, bodyH);
     }
 
@@ -1135,19 +1148,19 @@ export async function renderEtfView(
       const y = r * rowH;
 
       if (r % 2 === 1) {
-        ctx.fillStyle = "rgba(248, 250, 252, 0.65)";
+        ctx.fillStyle = cStripeBg;
         ctx.fillRect(0, y, totalW, rowH);
       }
 
       ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
-      ctx.fillStyle = item.in_latest ? "#1d4ed8" : "#64748b";
+      ctx.fillStyle = item.in_latest ? cActiveTicker : cFormerTicker;
       ctx.fillText(item.ticker || item.security_id, 8, y + 11);
 
       ctx.font = "500 10px -apple-system, BlinkMacSystemFont, sans-serif";
-      ctx.fillStyle = "#475569";
+      ctx.fillStyle = cHeaderText;
       ctx.fillText(String(item.quarters_held), labelWidth + 6, y + 11);
 
-      ctx.fillStyle = item.in_latest ? "#2563eb" : "#94a3b8";
+      ctx.fillStyle = item.in_latest ? cActiveCell : cFormerCell;
       for (const dIdx of item.date_indices) {
         const x = labelWidth + countWidth + dIdx * cellW;
         ctx.fillRect(x + 1, y + 2, cellW - 2, rowH - 4);
@@ -1155,7 +1168,7 @@ export async function renderEtfView(
     }
 
     // Draw subtle vertical year-boundary guide lines across rows
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.28)";
+    ctx.strokeStyle = cGuide;
     ctx.lineWidth = 1;
     for (const ys of yearStarts) {
       const x = labelWidth + countWidth + ys.idx * cellW;

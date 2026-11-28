@@ -182,11 +182,17 @@ class ExportSiteIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(compare_ov["matrix"]["AAA"]["BBB"]["overlapWeight"], 0.6)
             self.assertEqual([r["security_id"] for r in compare_ov["core_holdings"]], ["MSFT"])
 
-            # Split stock indexes should omit None fields
+            # Split stock indexes and lightweight search index should omit None fields
             idx_active = json.loads((dist_dir / "data/stocks/index-active.json").read_text(encoding="utf-8"))
             idx_former = json.loads((dist_dir / "data/stocks/index-former.json").read_text(encoding="utf-8"))
+            search_active = json.loads((dist_dir / "data/stocks/search-active.json").read_text(encoding="utf-8"))
+            meta_doc = json.loads((dist_dir / "data/meta.json").read_text(encoding="utf-8"))
             self.assertEqual(sorted(idx_active.keys()), ["MSFT", "NEWCO"])
             self.assertEqual(sorted(idx_former.keys()), ["OLDCO"])
+            self.assertEqual(len(search_active), 2)
+            self.assertIn("highlights", meta_doc)
+            self.assertIn("multi_etf", meta_doc["highlights"])
+            self.assertIn("div_leaders", meta_doc["highlights"])
             self.assertNotIn("cik", idx_former["OLDCO"])
             self.assertNotIn("pe_ratio", idx_former["OLDCO"])
 

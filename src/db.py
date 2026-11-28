@@ -170,6 +170,14 @@ CREATE TABLE IF NOT EXISTS financials_ttm (
     FOREIGN KEY (security_id) REFERENCES securities(security_id)
 );
 
+CREATE TABLE IF NOT EXISTS split_events (
+    security_id TEXT NOT NULL,
+    filed       TEXT NOT NULL,
+    ratio       REAL NOT NULL,
+    PRIMARY KEY (security_id, filed, ratio),
+    FOREIGN KEY (security_id) REFERENCES securities(security_id)
+);
+
 CREATE TABLE IF NOT EXISTS stock_metrics (
     security_id       TEXT PRIMARY KEY,
     latest_price_date TEXT,

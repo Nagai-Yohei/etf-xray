@@ -10,6 +10,7 @@
 import { getCompareOverview, getEtfHoldings } from "./api.js";
 import {
   baseChartOptions,
+  chartThemeColors,
   createChart,
   destroyAllCharts,
   destroyChart,
@@ -29,10 +30,12 @@ import {
 } from "./dom.js";
 
 function matrixCellBg(overlapWeight, isSelf, isSelected) {
-  if (isSelf) return "rgba(148, 163, 184, 0.14)";
-  const alpha = Math.max(0.06, Math.min(0.45, overlapWeight * 0.85));
-  if (isSelected) return `rgba(37, 99, 235, ${Math.min(0.55, alpha + 0.14).toFixed(2)})`;
-  return `rgba(37, 99, 235, ${alpha.toFixed(2)})`;
+  const dark = document.documentElement?.dataset?.theme === "dark";
+  if (isSelf) return dark ? "rgba(161, 161, 170, 0.08)" : "rgba(113, 113, 122, 0.07)";
+  const alpha = Math.max(0.04, Math.min(0.32, overlapWeight * 0.55));
+  const rgb = dark ? "96, 165, 250" : "29, 78, 216";
+  if (isSelected) return `rgba(${rgb}, ${Math.min(0.42, alpha + 0.12).toFixed(2)})`;
+  return `rgba(${rgb}, ${alpha.toFixed(2)})`;
 }
 
 function compareNullable(a, b, dir) {
@@ -431,6 +434,7 @@ export async function renderCompareView(
     chartsSlot.appendChild(leftCard);
     chartsSlot.appendChild(rightCard);
 
+    const chartTheme = chartThemeColors();
     if (top15.length > 0) {
       const leftOpts = baseChartOptions(fmtAxisPct, null, {
         tooltip: {
@@ -446,12 +450,12 @@ export async function renderCompareView(
       leftOpts.indexAxis = "y";
       leftOpts.scales = {
         x: {
-          grid: { color: PALETTE.grid },
-          ticks: { color: PALETTE.text, font: { size: 11 }, callback: (v) => fmtAxisPct(v) },
+          grid: { color: chartTheme.grid },
+          ticks: { color: chartTheme.text, font: { size: 11 }, callback: (v) => fmtAxisPct(v) },
         },
         y: {
           grid: { display: false },
-          ticks: { color: PALETTE.text, font: { size: 11, weight: "600" } },
+          ticks: { color: chartTheme.text, font: { size: 11, weight: "600" } },
         },
       };
       topOverlapChart = createChart(leftCanvas, {
@@ -465,7 +469,7 @@ export async function renderCompareView(
               backgroundColor: PALETTE.blueSoft,
               borderColor: PALETTE.blue,
               borderWidth: 1,
-              borderRadius: 3,
+              borderRadius: 2,
             },
             {
               label: `${state.etfB} Weight (%)`,
@@ -473,7 +477,7 @@ export async function renderCompareView(
               backgroundColor: PALETTE.emeraldSoft,
               borderColor: PALETTE.emerald,
               borderWidth: 1,
-              borderRadius: 3,
+              borderRadius: 2,
             },
           ],
         },
@@ -497,13 +501,13 @@ export async function renderCompareView(
       x: {
         stacked: true,
         max: 100,
-        grid: { color: PALETTE.grid },
-        ticks: { color: PALETTE.text, font: { size: 11 }, callback: (v) => fmtAxisPct(v) },
+        grid: { color: chartTheme.grid },
+        ticks: { color: chartTheme.text, font: { size: 11 }, callback: (v) => fmtAxisPct(v) },
       },
       y: {
         stacked: true,
         grid: { display: false },
-        ticks: { color: PALETTE.text, font: { size: 12, weight: "700" } },
+        ticks: { color: chartTheme.text, font: { size: 12, weight: "700" } },
       },
     };
     breakdownChart = createChart(rightCanvas, {

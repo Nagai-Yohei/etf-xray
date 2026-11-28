@@ -261,6 +261,96 @@ class TestMetricsIntegration(unittest.TestCase):
         self.assertIsNone(rows["BANK2"]["fcf_positive_years"])
         conn.close()
 
+    def test_roe_and_roic_small_denominator_and_extreme_guards(self) -> None:
+        conn = _new_memory_db()
+        # Near-zero equity buyback case (e.g. CL: eq/assets = 0.3%, raw ROE = 3900%)
+        _insert_stock(
+            conn,
+            "TINYEQ",
+            annual_overrides={
+                "total_assets": 15_000_000_000.0,
+                "total_equity": 50_000_000.0,
+                "net_income": 2_000_000_000.0,
+                "operating_income": 2_500_000_000.0,
+                "total_debt": 7_000_000_000.0,
+                "cash": 1_000_000_000.0,
+            },
+            ttm_overrides={"total_equity": 50_000_000.0},
+        )
+        # Near-zero invested capital case (e.g. NPWR/STXS: cash nearly cancels equity+debt)
+        _insert_stock(
+            conn,
+            "TINYIC",
+            annual_overrides={
+                "total_assets": 500_000_000.0,
+                "total_equity": 200_000_000.0,
+                "total_debt": 50_000_000.0,
+                "cash": 249_500_000.0,  # invested_cap = $500k (0.1% of assets)
+                "operating_income": -100_000_000.0,
+                "net_income": -90_000_000.0,
+            },
+            ttm_overrides={"total_equity": 200_000_000.0},
+        )
+        # Normal high-capital-efficiency company (inv/assets = 4%, ROE = 25%, ROIC = 35%) stays intact
+        _insert_stock(
+            conn,
+            "HEALTHY",
+            annual_overrides={
+                "total_assets": 100_000_000_000.0,
+                "total_equity": 8_000_000_000.0,
+                "total_debt": 2_000_000_000.0,
+                "cash": 6_000_000_000.0,  # invested_cap = $4B (4% of assets)
+                "operating_income": 1_800_000_000.0,
+                "net_income": 2_000_000_000.0,
+            },
+            ttm_overrides={"total_equity": 8_000_000_000.0},
+        )
+
+        rebuild_quarter_prices(conn)
+        rebuild_stock_metrics(conn)
+        rows = {
+            r["security_id"]: r
+            for r in conn.execute("SELECT * FROM stock_metrics").fetchall()
+        }
+
+        self.assertIsNone(rows["TINYEQ"]["roe"])
+        self.assertIsNotNone(rows["TINYEQ"]["roic"])
+        self.assertIn("ROE omitted", rows["TINYEQ"]["data_notes"] or "")
+
+        self.assertIsNotNone(rows["TINYIC"]["roe"])
+        self.assertIsNone(rows["TINYIC"]["roic"])
+        self.assertIn("ROIC omitted", rows["TINYIC"]["data_notes"] or "")
+
+        self.assertAlmostEqual(rows["HEALTHY"]["roe"], 0.25, places=4)
+        self.assertIsNotNone(rows["HEALTHY"]["roic"])
+        self.assertGreater(rows["HEALTHY"]["roic"], 0.25)
+        conn.close()
+
+    def test_persisted_split_events_adjust_post_price_split_without_disk_cache(self) -> None:
+        conn = _new_memory_db()
+        _insert_stock(
+            conn,
+            "SPLT",
+            price=200.0,
+            price_date="2026-06-30",
+            annual_overrides={"split_factor": 2.0, "eps_diluted": 5.0, "dps_declared": 2.0},
+            ttm_overrides={"eps_ttm": 5.0, "dps_ttm": 2.0},
+        )
+        conn.execute(
+            "INSERT INTO split_events (security_id, filed, ratio) VALUES ('SPLT', '2026-08-01', 2.0)"
+        )
+        conn.commit()
+
+        rebuild_quarter_prices(conn)
+        rebuild_stock_metrics(conn)
+        row = conn.execute("SELECT * FROM stock_metrics WHERE security_id = 'SPLT'").fetchone()
+
+        # Pre-split implied price ($200) aligned to post-split basis ($100): P/E = 100 / 5 = 20x, yield = 2 / 100 = 2%
+        self.assertAlmostEqual(row["pe_ratio"], 20.0, places=3)
+        self.assertAlmostEqual(row["ttm_yield"], 0.02, places=4)
+        self.assertIn("adjusted for stock split", row["data_notes"] or "")
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ Output files:
 - dist/data/etf/<ETF_ID>/summary.json
 - dist/data/etf/<ETF_ID>/tenure.json
 - dist/data/etf/<ETF_ID>/holdings/<AS_OF>.json
+- dist/data/stocks/search-active.json
 - dist/data/stocks/index-active.json
 - dist/data/stocks/index-former.json
 - dist/data/stocks/shards/<00..ff>.json
@@ -575,6 +576,40 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
         _write_json(data_dir / "stocks" / "index-active.json", stocks_index_active)
         _write_json(data_dir / "stocks" / "index-former.json", stocks_index_former)
 
+        # Lightweight search index for initial page load (avoids fetching full 2MB metrics index on Home/Stock views)
+        search_active = [
+            {
+                "security_id": item["security_id"],
+                "ticker": item["ticker"],
+                "name": item["name"],
+                "current_etfs": item["current_etfs"],
+                "ttm_yield": item["ttm_yield"],
+                "latest_price_date": item["latest_price_date"],
+            }
+            for item in stocks_index_active.values()
+        ]
+        _write_json(data_dir / "stocks" / "search-active.json", search_active)
+
+        # Precompute Home View highlight tables so Home renders directly from meta.json
+        active_vals = list(stocks_index_active.values())
+        multi_etf_highlights = sorted(
+            (s for s in active_vals if len(s.get("current_etfs") or []) >= 3),
+            key=lambda s: (-len(s.get("current_etfs") or []), -(s.get("revenue_ttm") or 0.0), s["security_id"]),
+        )[:8]
+        div_leader_highlights = sorted(
+            (
+                s
+                for s in active_vals
+                if (s.get("div_streak_years") or 0) >= 10 and (s.get("ttm_yield") or 0.0) > 0
+            ),
+            key=lambda s: (
+                -(s.get("div_streak_years") or 0),
+                -len(s.get("current_etfs") or []),
+                -(s.get("div_cagr_5y") if s.get("div_cagr_5y") is not None else -999.0),
+                s["security_id"],
+            ),
+        )[:8]
+
         # ------------------------------------------------------------
         # 3. meta.json
         # ------------------------------------------------------------
@@ -592,6 +627,31 @@ def export_site(db_path: Path = DB_PATH, dist_dir: Path = DIST_DIR) -> dict[str,
                     "For informational purposes only; not investment advice."
                 ),
                 "etfs": meta_etfs,
+                "highlights": {
+                    "multi_etf": [
+                        {
+                            "security_id": s["security_id"],
+                            "ticker": s["ticker"],
+                            "name": s["name"],
+                            "current_etfs": s["current_etfs"],
+                            "ttm_yield": s["ttm_yield"],
+                            "pe_ratio": s["pe_ratio"],
+                        }
+                        for s in multi_etf_highlights
+                    ],
+                    "div_leaders": [
+                        {
+                            "security_id": s["security_id"],
+                            "ticker": s["ticker"],
+                            "name": s["name"],
+                            "div_streak_years": s["div_streak_years"],
+                            "div_streak_open": s["div_streak_open"],
+                            "ttm_yield": s["ttm_yield"],
+                            "div_cagr_5y": s["div_cagr_5y"],
+                        }
+                        for s in div_leader_highlights
+                    ],
+                },
                 "stock_count": stock_count,
                 "active_stock_count": len(stocks_index_active),
                 "former_stock_count": len(stocks_index_former),

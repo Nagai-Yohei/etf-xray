@@ -102,19 +102,45 @@ export function fmtAxisSignedInt(value) {
   return num > 0 ? `+${num}` : String(num);
 }
 
+export function isDarkTheme() {
+  return document.documentElement?.dataset?.theme === "dark";
+}
+
+export function chartThemeColors() {
+  if (isDarkTheme()) {
+    return {
+      grid: "rgba(161, 161, 170, 0.16)",
+      text: "#a1a1aa",
+      legend: "#d4d4d8",
+      tooltipBg: "#27272a",
+      tooltipTitle: "#fafafa",
+      tooltipBody: "#e4e4e7",
+    };
+  }
+  return {
+    grid: "rgba(113, 113, 122, 0.15)",
+    text: "#52525b",
+    legend: "#27272a",
+    tooltipBg: "#18181b",
+    tooltipTitle: "#fafafa",
+    tooltipBody: "#e4e4e7",
+  };
+}
+
 export function baseChartOptions(yTickFormatter, rightYTickFormatter = null, extra = {}) {
+  const theme = chartThemeColors();
   const scales = {
     x: {
       stacked: Boolean(extra.stacked),
       grid: { display: false },
-      ticks: { color: PALETTE.text, font: { size: 11 }, maxTicksLimit: 10 },
+      ticks: { color: theme.text, font: { size: 11 }, maxTicksLimit: 10 },
     },
     y: {
       position: "left",
       stacked: Boolean(extra.stacked),
-      grid: { color: PALETTE.grid },
+      grid: { color: theme.grid },
       ticks: {
-        color: PALETTE.text,
+        color: theme.text,
         font: { size: 11 },
         maxTicksLimit: 6,
         callback: yTickFormatter,
@@ -127,7 +153,7 @@ export function baseChartOptions(yTickFormatter, rightYTickFormatter = null, ext
       position: "right",
       grid: { drawOnChartArea: false },
       ticks: {
-        color: PALETTE.text,
+        color: theme.text,
         font: { size: 11 },
         maxTicksLimit: 6,
         callback: rightYTickFormatter,
@@ -144,13 +170,13 @@ export function baseChartOptions(yTickFormatter, rightYTickFormatter = null, ext
         position: "top",
         align: "start",
         labels: {
-          boxWidth: 11,
-          boxHeight: 11,
+          boxWidth: 10,
+          boxHeight: 10,
           useBorderRadius: true,
           borderRadius: 2,
           padding: 12,
-          color: "#334155",
-          font: { size: 12 },
+          color: theme.legend,
+          font: { size: 11 },
           generateLabels: (chart) => {
             const base = window.Chart.defaults.plugins.legend.labels.generateLabels(chart);
             for (const item of base) {
@@ -163,11 +189,11 @@ export function baseChartOptions(yTickFormatter, rightYTickFormatter = null, ext
         },
       },
       tooltip: {
-        backgroundColor: "#0f172a",
-        titleColor: "#f8fafc",
-        bodyColor: "#e2e8f0",
+        backgroundColor: theme.tooltipBg,
+        titleColor: theme.tooltipTitle,
+        bodyColor: theme.tooltipBody,
         padding: 10,
-        cornerRadius: 6,
+        cornerRadius: 4,
         ...(extra.tooltip || {}),
         callbacks: {
           label: (ctx) => {

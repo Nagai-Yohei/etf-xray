@@ -378,7 +378,7 @@ def _apply_cik_hygiene(
         if is_non_common_ticker(sec_id) or sec_id.endswith(".OLD"):
             conn.execute("UPDATE securities SET cik = NULL WHERE security_id = ?", (sec_id,))
 
-    for tbl in ("financials_annual", "financials_quarterly", "financials_ttm"):
+    for tbl in ("financials_annual", "financials_quarterly", "financials_ttm", "split_events"):
         conn.execute(
             f"""
             DELETE FROM {tbl}
@@ -396,11 +396,13 @@ def _write_security_financials(
     ann_rows: list[dict[str, Any]],
     q_rows: list[dict[str, Any]],
     ttm_row: dict[str, Any] | None,
+    split_events: list[tuple[str, float]] | None = None,
 ) -> None:
-    """Replace annual, quarterly, and TTM XBRL rows for one security."""
+    """Replace annual, quarterly, TTM, and split-event XBRL rows for one security."""
     conn.execute("DELETE FROM financials_annual WHERE security_id = ?", (sec_id,))
     conn.execute("DELETE FROM financials_quarterly WHERE security_id = ?", (sec_id,))
     conn.execute("DELETE FROM financials_ttm WHERE security_id = ?", (sec_id,))
+    conn.execute("DELETE FROM split_events WHERE security_id = ?", (sec_id,))
 
     if not ann_rows:
         return
@@ -521,6 +523,15 @@ def _write_security_financials(
             ),
         )
 
+    if split_events:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO split_events (security_id, filed, ratio)
+            VALUES (?, ?, ?)
+            """,
+            [(sec_id, sp_filed, float(sp_ratio)) for sp_filed, sp_ratio in split_events],
+        )
+
 
 def update_fundamentals_incremental(
     conn: sqlite3.Connection,
@@ -601,7 +612,8 @@ def update_fundamentals_incremental(
     # Cache refresh status (available_ciks, chain_changed) and parsed tuples per CIK chain
     chain_status_cache: dict[tuple[str, ...], tuple[list[str], bool]] = {}
     parsed_cache: dict[
-        tuple[str, ...], tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]
+        tuple[str, ...],
+        tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, list[tuple[str, float]]],
     ] = {}
 
     checked_count = 0
@@ -653,14 +665,14 @@ def update_fundamentals_incremental(
             ann_rows, splits = extract_annual_financials(merged_facts)
             q_rows = extract_quarterly_financials(merged_facts, ann_rows, splits)
             ttm_row = extract_ttm_financials(merged_facts, ann_rows)
-            parsed_cache[cik_chain] = (ann_rows, q_rows, ttm_row)
+            parsed_cache[cik_chain] = (ann_rows, q_rows, ttm_row, splits)
 
-        ann_rows, q_rows, ttm_row = parsed_cache[cik_chain]
+        ann_rows, q_rows, ttm_row, splits = parsed_cache[cik_chain]
         if not ann_rows:
             missing_count += 1
             continue
 
-        _write_security_financials(conn, sec_id, ann_rows, q_rows, ttm_row)
+        _write_security_financials(conn, sec_id, ann_rows, q_rows, ttm_row, split_events=splits)
         updated_count += 1
 
         if updated_count % 50 == 0:

@@ -1,5 +1,5 @@
 /**
- * SPA entry point, hash router, and global stock search.
+ * SPA entry point, hash router, keyboard-friendly global search, and theme switcher.
  * Routes:
  *   #/                  (Home overview)
  *   #/etf/<ETF_ID>      (ETF holdings & history view)
@@ -8,13 +8,20 @@
  *   #/stock/<SECURITY_ID> (Individual stock fundamentals view)
  */
 
-import { getActiveStocksIndex, getMeta, getStocksIndex } from "./api.js";
+import {
+  getActiveStocksIndex,
+  getMeta,
+  getSearchActiveIndex,
+  getStocksIndex,
+} from "./api.js";
 import { renderCompareView } from "./compare-view.js";
 import { clearNode, el, fmtPct } from "./dom.js";
 import { renderEtfView } from "./etf-view.js";
 import { renderHomeView } from "./home-view.js";
 import { renderScreenerView } from "./screener-view.js";
 import { renderStockView } from "./stock-view.js";
+
+const THEME_STORAGE_KEY = "etf_xray_theme_v1";
 
 const rootEl = document.getElementById("app-root");
 const etfSwitcher = document.getElementById("etf-switcher");
@@ -23,7 +30,48 @@ const navScreenerLink = document.getElementById("nav-screener-link");
 const searchInput = document.getElementById("global-search-input");
 const searchDropdown = document.getElementById("global-search-results");
 const topbarContext = document.getElementById("topbar-context");
+const themeToggleBtn = document.getElementById("theme-toggle");
 const footerEl = document.getElementById("app-footer");
+
+function applyTheme(theme) {
+  const resolved = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = resolved;
+  if (themeToggleBtn) {
+    themeToggleBtn.textContent = resolved === "dark" ? "Light" : "Dark";
+    themeToggleBtn.setAttribute(
+      "aria-label",
+      resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"
+    );
+  }
+}
+
+function initTheme() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(THEME_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+  const prefersDark =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(saved === "dark" || saved === "light" ? saved : prefersDark ? "dark" : "light");
+
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      applyTheme(next);
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, next);
+      } catch {
+        // Ignore
+      }
+      if (metaData) {
+        handleRoute();
+      }
+    });
+  }
+}
 
 function setTopbarContext(info) {
   if (!topbarContext) return;
@@ -115,21 +163,26 @@ window.addEventListener("scroll", scheduleStickySync, { passive: true });
 window.addEventListener("resize", scheduleStickySync, { passive: true });
 
 let metaData = null;
-let stocksIndexMap = {};
-let stocksList = [];
+let searchStocksList = [];
+let activeIndexMap = null;
 let fullIndexLoaded = false;
 let currentEtfId = "SCHD";
 let lastBackTarget = null;
 let cleanupView = null;
 let routeSeq = 0;
 
-async function ensureFullStocksIndex() {
-  if (fullIndexLoaded) return stocksIndexMap;
+async function ensureActiveStocksIndex() {
+  if (activeIndexMap) return activeIndexMap;
+  activeIndexMap = await getActiveStocksIndex();
+  return activeIndexMap;
+}
+
+async function ensureFullSearchIndex() {
+  if (fullIndexLoaded) return searchStocksList;
   const full = await getStocksIndex();
-  stocksIndexMap = full;
-  stocksList = Object.values(full);
+  searchStocksList = Object.values(full);
   fullIndexLoaded = true;
-  return full;
+  return searchStocksList;
 }
 
 function navigate(hash) {
@@ -141,19 +194,45 @@ function navigate(hash) {
 }
 
 function setupGlobalSearch() {
+  let activeIdx = -1;
+  let currentMatches = [];
+
   function closeDropdown() {
     searchDropdown.classList.add("hidden");
+    activeIdx = -1;
+  }
+
+  function updateFocusHighlight() {
+    const opts = searchDropdown.querySelectorAll(".search-item[role='option']");
+    opts.forEach((node, idx) => {
+      const isFocused = idx === activeIdx;
+      node.classList.toggle("focused", isFocused);
+      node.setAttribute("aria-selected", isFocused ? "true" : "false");
+      if (isFocused) {
+        node.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }
+
+  function openMatch(stock) {
+    if (!stock) return;
+    searchInput.value = "";
+    closeDropdown();
+    searchInput.blur();
+    navigate(`#/stock/${encodeURIComponent(stock.security_id)}`);
   }
 
   function renderResults(query) {
     clearNode(searchDropdown);
+    activeIdx = -1;
     const q = query.trim().toLowerCase();
     if (!q) {
+      currentMatches = [];
       closeDropdown();
       return;
     }
 
-    const matches = stocksList
+    currentMatches = searchStocksList
       .filter(
         (s) =>
           (s.ticker || "").toLowerCase().includes(q) ||
@@ -169,24 +248,29 @@ function setupGlobalSearch() {
       })
       .slice(0, 12);
 
-    if (matches.length === 0) {
+    if (currentMatches.length === 0) {
       searchDropdown.appendChild(
         el("div", { className: "search-item text-muted", text: "No matching securities" })
       );
     } else {
-      for (const s of matches) {
+      currentMatches.forEach((s, idx) => {
+        const etfList = s.current_etfs || [];
         const etfTag =
-          s.current_etfs && s.current_etfs.length > 0
-            ? el("span", { className: "badge badge-green", text: s.current_etfs.join(", ") })
+          etfList.length > 0
+            ? el("span", {
+                className: "badge badge-slate",
+                text: etfList.length <= 3 ? etfList.join(", ") : `${etfList.slice(0, 2).join(", ")} +${etfList.length - 2}`,
+                title: etfList.join(", "),
+              })
             : el("span", { className: "badge badge-slate", text: "Former" });
 
         const yieldText =
           s.ttm_yield !== null && s.ttm_yield !== undefined
             ? el("span", {
                 className: "num text-muted",
-                text: `Yield ${fmtPct(s.ttm_yield, 2)}`,
+                text: fmtPct(s.ttm_yield, 2),
                 title: s.latest_price_date
-                  ? `TTM dividend yield based on implied price as of ${s.latest_price_date}`
+                  ? `TTM dividend yield as of ${s.latest_price_date}`
                   : "TTM dividend yield",
               })
             : null;
@@ -197,11 +281,11 @@ function setupGlobalSearch() {
             {
               className: "search-item",
               role: "option",
-              onClick: () => {
-                searchInput.value = "";
-                closeDropdown();
-                navigate(`#/stock/${encodeURIComponent(s.security_id)}`);
+              onMouseenter: () => {
+                activeIdx = idx;
+                updateFocusHighlight();
               },
+              onClick: () => openMatch(s),
             },
             [
               el("div", { className: "search-item-main" }, [
@@ -212,14 +296,14 @@ function setupGlobalSearch() {
             ]
           )
         );
-      }
+      });
     }
     searchDropdown.classList.remove("hidden");
   }
 
   function warmFormerIndex() {
     if (fullIndexLoaded) return;
-    ensureFullStocksIndex()
+    ensureFullSearchIndex()
       .then(() => {
         if (document.activeElement === searchInput && searchInput.value.trim()) {
           renderResults(searchInput.value);
@@ -240,15 +324,42 @@ function setupGlobalSearch() {
     if (e.key === "Escape") {
       closeDropdown();
       searchInput.blur();
+    } else if (e.key === "ArrowDown" && currentMatches.length > 0) {
+      e.preventDefault();
+      activeIdx = (activeIdx + 1) % currentMatches.length;
+      updateFocusHighlight();
+    } else if (e.key === "ArrowUp" && currentMatches.length > 0) {
+      e.preventDefault();
+      activeIdx = activeIdx <= 0 ? currentMatches.length - 1 : activeIdx - 1;
+      updateFocusHighlight();
     } else if (e.key === "Enter") {
-      const first = searchDropdown.querySelector(".search-item[role='option']");
-      if (first) first.click();
+      const target = currentMatches[activeIdx >= 0 ? activeIdx : 0];
+      if (target) {
+        e.preventDefault();
+        openMatch(target);
+      }
     }
   });
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#global-search-wrap")) {
       closeDropdown();
     }
+  });
+  // Press "/" outside editable fields to focus global search
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = document.activeElement?.tagName;
+    if (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      tag === "SELECT" ||
+      document.activeElement?.isContentEditable
+    ) {
+      return;
+    }
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
   });
 }
 
@@ -279,7 +390,7 @@ async function handleRoute() {
       lastBackTarget = { href: "#/", label: "← Back to Home" };
       setTopbarContext(null);
       document.title = "ETF X-Ray — U.S. ETF Holdings & SEC Fundamentals";
-      nextCleanup = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      nextCleanup = await renderHomeView(rootEl, metaData, searchStocksList, navigate);
       if (isStale()) {
         if (typeof nextCleanup === "function") nextCleanup();
         return;
@@ -291,10 +402,14 @@ async function handleRoute() {
       const reqA = params.get("a") ? params.get("a").toUpperCase() : null;
       const reqB = params.get("b") ? params.get("b").toUpperCase() : null;
       setTopbarContext(null);
+      clearNode(rootEl);
+      rootEl.appendChild(el("div", { className: "loading-box", text: "Loading comparison data..." }));
+      const idxMap = await ensureActiveStocksIndex();
+      if (isStale()) return;
       nextCleanup = await renderCompareView(
         rootEl,
         metaData,
-        stocksIndexMap,
+        idxMap,
         reqA,
         reqB,
         navigate,
@@ -316,10 +431,14 @@ async function handleRoute() {
     } else if (parts[0] === "screener") {
       etfSwitcher.value = "";
       setTopbarContext(null);
+      clearNode(rootEl);
+      rootEl.appendChild(el("div", { className: "loading-box", text: "Loading stock screener..." }));
+      const idxMap = await ensureActiveStocksIndex();
+      if (isStale()) return;
       nextCleanup = await renderScreenerView(
         rootEl,
         metaData,
-        stocksList,
+        Object.values(idxMap),
         params,
         navigate,
         (hash) => {
@@ -390,7 +509,7 @@ async function handleRoute() {
       lastBackTarget = { href: "#/", label: "← Back to Home" };
       setTopbarContext(null);
       document.title = "ETF X-Ray — U.S. ETF Holdings & SEC Fundamentals";
-      nextCleanup = await renderHomeView(rootEl, metaData, stocksList, navigate);
+      nextCleanup = await renderHomeView(rootEl, metaData, searchStocksList, navigate);
       if (isStale()) {
         if (typeof nextCleanup === "function") nextCleanup();
         return;
@@ -413,11 +532,11 @@ async function handleRoute() {
 }
 
 async function init() {
+  initTheme();
   try {
-    const [meta, activeIndex] = await Promise.all([getMeta(), getActiveStocksIndex()]);
+    const [meta, searchActive] = await Promise.all([getMeta(), getSearchActiveIndex()]);
     metaData = meta;
-    stocksIndexMap = activeIndex;
-    stocksList = Object.values(activeIndex);
+    searchStocksList = Array.isArray(searchActive) ? searchActive : Object.values(searchActive || {});
 
     clearNode(etfSwitcher);
     etfSwitcher.appendChild(el("option", { value: "", text: "All ETFs (Home)" }));

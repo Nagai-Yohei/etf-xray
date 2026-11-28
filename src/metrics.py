@@ -71,6 +71,71 @@ def _load_cached_company_facts(raw_cf_dir: Path, cik: str) -> dict[str, Any] | N
     return None
 
 
+def _load_split_events_from_db(
+    conn: sqlite3.Connection,
+) -> dict[str, list[tuple[str, float]]] | None:
+    """Load persisted split events from SQLite, returning None if the table is absent or empty."""
+    tbl = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='split_events'"
+    ).fetchone()
+    if tbl is None:
+        return None
+    rows = conn.execute(
+        "SELECT security_id, filed, ratio FROM split_events ORDER BY security_id, filed ASC"
+    ).fetchall()
+    if not rows:
+        return None
+    out: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for r in rows:
+        out[r["security_id"]].append((str(r["filed"]), float(r["ratio"])))
+    return out
+
+
+def sync_split_events_from_cache(
+    conn: sqlite3.Connection,
+    raw_cf_dir: Path | None = None,
+) -> int:
+    """Populate SQLite split_events table from cached SEC CompanyFacts JSON files."""
+    cf_dir = raw_cf_dir if raw_cf_dir is not None else (RAW_DIR / "edgar" / "companyfacts")
+    cik_overrides = load_cik_overrides()
+    rows = conn.execute(
+        "SELECT security_id, cik FROM securities WHERE cik IS NOT NULL AND cik != '' ORDER BY security_id"
+    ).fetchall()
+
+    splits_by_chain: dict[tuple[str, ...], list[tuple[str, float]]] = {}
+    to_insert: list[tuple[str, str, float]] = []
+    for r in rows:
+        sec_id = r["security_id"]
+        chain = get_cik_chain(sec_id, r["cik"], cik_overrides)
+        if not chain:
+            continue
+        if chain not in splits_by_chain:
+            payloads: list[dict[str, Any]] = []
+            for c in chain:
+                payload = _load_cached_company_facts(cf_dir, c)
+                if payload is not None:
+                    payloads.append(payload)
+            if payloads:
+                try:
+                    _, sp = extract_annual_financials(merge_company_facts(payloads))
+                    splits_by_chain[chain] = sp
+                except Exception:  # noqa: BLE001
+                    splits_by_chain[chain] = []
+            else:
+                splits_by_chain[chain] = []
+        for sp_filed, sp_ratio in splits_by_chain[chain]:
+            to_insert.append((sec_id, sp_filed, float(sp_ratio)))
+
+    conn.execute("DELETE FROM split_events")
+    if to_insert:
+        conn.executemany(
+            "INSERT OR IGNORE INTO split_events (security_id, filed, ratio) VALUES (?, ?, ?)",
+            to_insert,
+        )
+    conn.commit()
+    return len(to_insert)
+
+
 def rebuild_quarter_prices(conn: sqlite3.Connection) -> int:
     """Rebuild quarter_prices from etf_holdings (value_usd / shares)."""
     conn.execute("DELETE FROM quarter_prices")
@@ -221,6 +286,7 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
     ).fetchall():
         annual_by_sec.setdefault(r["security_id"], []).append(r)
 
+    db_splits = _load_split_events_from_db(conn)
     records_to_insert: list[tuple[Any, ...]] = []
 
     for sec_id in sec_ids:
@@ -304,34 +370,39 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             and latest_ann["split_factor"] is not None
             and abs(float(latest_ann["split_factor"]) - 1.0) > 0.05
         ):
-            sec_cik = cik_by_sec.get(sec_id)
-            if sec_cik:
-                chain = get_cik_chain(sec_id, sec_cik, cik_overrides)
-                raw_cf_dir = RAW_DIR / "edgar" / "companyfacts"
-                cf_payloads = []
-                for c in chain:
-                    payload = _load_cached_company_facts(raw_cf_dir, c)
-                    if payload is not None:
-                        cf_payloads.append(payload)
-                if cf_payloads:
-                    _, sp_events = extract_annual_financials(merge_company_facts(cf_payloads))
-                    post_price_factor = 1.0
-                    for sp_filed, sp_f in sp_events:
-                        if sp_filed > latest_price_date:
-                            post_price_factor *= sp_f
-                    if abs(post_price_factor - 1.0) > 0.05:
-                        prior_ps = recent_prices.get(sec_id, [])[:-1][-4:]
-                        # Only adjust if latest_price has not already shifted by ~1/post_price_factor vs recent quarters
-                        # (handles multi-ETF staggered dates where the split occurred 2-3 price points before the 10-Q filing, e.g. DD)
-                        already_split_in_price = any(
-                            p > 0 and abs((latest_price / p) * post_price_factor - 1.0) <= 0.35
-                            for p in prior_ps
+            sp_events: list[tuple[str, float]] = []
+            if db_splits is not None:
+                sp_events = db_splits.get(sec_id, [])
+            else:
+                sec_cik = cik_by_sec.get(sec_id)
+                if sec_cik:
+                    chain = get_cik_chain(sec_id, sec_cik, cik_overrides)
+                    raw_cf_dir = RAW_DIR / "edgar" / "companyfacts"
+                    cf_payloads = []
+                    for c in chain:
+                        payload = _load_cached_company_facts(raw_cf_dir, c)
+                        if payload is not None:
+                            cf_payloads.append(payload)
+                    if cf_payloads:
+                        _, sp_events = extract_annual_financials(merge_company_facts(cf_payloads))
+            if sp_events:
+                post_price_factor = 1.0
+                for sp_filed, sp_f in sp_events:
+                    if sp_filed > latest_price_date:
+                        post_price_factor *= sp_f
+                if abs(post_price_factor - 1.0) > 0.05:
+                    prior_ps = recent_prices.get(sec_id, [])[:-1][-4:]
+                    # Only adjust if latest_price has not already shifted by ~1/post_price_factor vs recent quarters
+                    # (handles multi-ETF staggered dates where the split occurred 2-3 price points before the 10-Q filing, e.g. DD)
+                    already_split_in_price = any(
+                        p > 0 and abs((latest_price / p) * post_price_factor - 1.0) <= 0.35
+                        for p in prior_ps
+                    )
+                    if not already_split_in_price:
+                        ratio_price = latest_price / post_price_factor
+                        notes.append(
+                            "Valuation/yield ratios adjusted for stock split occurring after latest ETF reporting date"
                         )
-                        if not already_split_in_price:
-                            ratio_price = latest_price / post_price_factor
-                            notes.append(
-                                "Valuation/yield ratios adjusted for stock split occurring after latest ETF reporting date"
-                            )
 
         # Dividend yield, P/E, and P/B based on split-aligned implied quarter-end price
         ttm_yield = (
@@ -474,20 +545,36 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                     if latest_ann["sbc"] is not None:
                         fcf_ex_sbc_margin = (fcf_f - float(latest_ann["sbc"])) / rev_f
 
+            tot_assets_f = (
+                float(latest_ann["total_assets"])
+                if latest_ann["total_assets"] is not None and float(latest_ann["total_assets"]) > 0
+                else None
+            )
+            sector_group = sector_by_sec.get(sec_id)
+
             if (
                 latest_ann["net_income"] is not None
                 and latest_ann["total_equity"] is not None
                 and float(latest_ann["total_equity"]) > 0
                 and (eq_latest is None or eq_latest > 0)
             ):
-                roe = float(latest_ann["net_income"]) / float(latest_ann["total_equity"])
+                eq_f = float(latest_ann["total_equity"])
+                raw_roe = float(latest_ann["net_income"]) / eq_f
+                min_eq = (
+                    max(tot_assets_f * 0.01, min(1_000_000.0, tot_assets_f * 0.05))
+                    if tot_assets_f
+                    else 0.0
+                )
+                if eq_f >= min_eq and abs(raw_roe) <= 5.0:
+                    roe = raw_roe
+                else:
+                    notes.append("ROE omitted (near-zero book equity or extreme ratio)")
 
             if (
                 latest_ann["total_equity"] is not None
-                and latest_ann["total_assets"] is not None
-                and float(latest_ann["total_assets"]) > 0
+                and tot_assets_f is not None
             ):
-                equity_ratio = float(latest_ann["total_equity"]) / float(latest_ann["total_assets"])
+                equity_ratio = float(latest_ann["total_equity"]) / tot_assets_f
 
             # ROIC = NOPAT / (Total Equity + Total Debt - Cash)
             ebit = None
@@ -513,7 +600,16 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                     - float(latest_ann["cash"] or 0.0)
                 )
                 if invested_cap > 0:
-                    roic = nopat / invested_cap
+                    raw_roic = nopat / invested_cap
+                    min_ic = (
+                        max(tot_assets_f * 0.01, min(1_000_000.0, tot_assets_f * 0.05))
+                        if tot_assets_f
+                        else 0.0
+                    )
+                    if invested_cap >= min_ic and abs(raw_roic) <= 5.0:
+                        roic = raw_roic
+                    elif sector_group not in ("bank", "insurance", "asset_mgmt"):
+                        notes.append("ROIC omitted (near-zero invested capital or extreme ratio)")
 
             # Interest Coverage = EBIT / Interest Expense
             if ebit is not None and latest_ann["interest_expense"] is not None and float(latest_ann["interest_expense"]) > 0:
@@ -537,7 +633,6 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
                 current_ratio = float(latest_ann["current_assets"]) / float(latest_ann["current_liabilities"])
 
             # Sector-aware suppression of ratios distorted by specialized accounting (derived from SEC SIC)
-            sector_group = sector_by_sec.get(sec_id)
             if sector_group == "reit":
                 payout_ratio_eps = None
                 payout_ratio_fcf = None
@@ -630,13 +725,26 @@ def rebuild_stock_metrics(conn: sqlite3.Connection) -> int:
             v5, span5 = _find_value_n_years_ago(rev_series, le, 5)
             rev_cagr_5y = _calc_cagr(v5, lv, span5)
 
-        # 5-year median ROE (requires >= 3 valid years with positive equity; skips extreme near-zero-equity distortions)
+        # 5-year median ROE (requires >= 3 valid years with meaningful positive equity; skips extreme distortions)
         roe_5y_median = None
         if ann_rows:
             roe_vals: list[float] = []
             for r in ann_rows[-5:]:
                 if r["net_income"] is not None and r["total_equity"] is not None and float(r["total_equity"]) > 0:
-                    r_val = float(r["net_income"]) / float(r["total_equity"])
+                    eq_r = float(r["total_equity"])
+                    assets_r = (
+                        float(r["total_assets"])
+                        if (r["total_assets"] is not None and float(r["total_assets"]) > 0)
+                        else 0.0
+                    )
+                    min_eq_r = (
+                        max(assets_r * 0.01, min(1_000_000.0, assets_r * 0.05))
+                        if assets_r > 0
+                        else 0.0
+                    )
+                    if eq_r < min_eq_r:
+                        continue
+                    r_val = float(r["net_income"]) / eq_r
                     if abs(r_val) <= 5.0:
                         roe_vals.append(r_val)
             if len(roe_vals) >= 3:
@@ -737,40 +845,43 @@ def compute_etf_dividend_history(
     - Excludes extreme outliers (yield > 18%) and scales the covered weighted yield to the
       ETF's full equity portfolio value.
     """
-    raw_cf_dir = RAW_DIR / "edgar" / "companyfacts"
-
-    # 1. Collect split events per security from cached companyfacts JSON
-    cik_overrides = load_cik_overrides()
-    cik_map = {
-        r["security_id"]: r["cik"]
-        for r in conn.execute(
-            "SELECT security_id, cik FROM securities WHERE cik IS NOT NULL AND cik != ''"
-        ).fetchall()
-    }
-    splits_by_chain: dict[tuple[str, ...], list[tuple[str, float]]] = (
-        splits_cache if splits_cache is not None else {}
-    )
-    sec_splits: dict[str, list[tuple[str, float]]] = {}
-    for sec_id, cik in cik_map.items():
-        cik_chain = get_cik_chain(sec_id, cik, cik_overrides)
-        if not cik_chain:
-            continue
-        if cik_chain not in splits_by_chain:
-            payloads: list[dict[str, Any]] = []
-            for c in cik_chain:
-                payload = _load_cached_company_facts(raw_cf_dir, c)
-                if payload is not None:
-                    payloads.append(payload)
-            if payloads:
-                try:
-                    _, sp = extract_annual_financials(merge_company_facts(payloads))
-                    splits_by_chain[cik_chain] = sp
-                except Exception:  # noqa: BLE001
+    # 1. Collect split events per security (prefer persisted SQLite table; fall back to cached JSON)
+    db_splits = _load_split_events_from_db(conn)
+    if db_splits is not None:
+        sec_splits: dict[str, list[tuple[str, float]]] = db_splits
+    else:
+        raw_cf_dir = RAW_DIR / "edgar" / "companyfacts"
+        cik_overrides = load_cik_overrides()
+        cik_map = {
+            r["security_id"]: r["cik"]
+            for r in conn.execute(
+                "SELECT security_id, cik FROM securities WHERE cik IS NOT NULL AND cik != ''"
+            ).fetchall()
+        }
+        splits_by_chain: dict[tuple[str, ...], list[tuple[str, float]]] = (
+            splits_cache if splits_cache is not None else {}
+        )
+        sec_splits = {}
+        for sec_id, cik in cik_map.items():
+            cik_chain = get_cik_chain(sec_id, cik, cik_overrides)
+            if not cik_chain:
+                continue
+            if cik_chain not in splits_by_chain:
+                payloads: list[dict[str, Any]] = []
+                for c in cik_chain:
+                    payload = _load_cached_company_facts(raw_cf_dir, c)
+                    if payload is not None:
+                        payloads.append(payload)
+                if payloads:
+                    try:
+                        _, sp = extract_annual_financials(merge_company_facts(payloads))
+                        splits_by_chain[cik_chain] = sp
+                    except Exception:  # noqa: BLE001
+                        splits_by_chain[cik_chain] = []
+                else:
                     splits_by_chain[cik_chain] = []
-            else:
-                splits_by_chain[cik_chain] = []
-        if splits_by_chain[cik_chain]:
-            sec_splits[sec_id] = splits_by_chain[cik_chain]
+            if splits_by_chain[cik_chain]:
+                sec_splits[sec_id] = splits_by_chain[cik_chain]
 
     # 2. Identify the first reporting date reflecting each split via quarter_prices jumps
     prices_by_sec: dict[str, list[tuple[str, float]]] = defaultdict(list)

@@ -297,18 +297,21 @@ def check_database(errors: list[str]) -> str:
                     f"[DB] Suspected $000 scaling bug for {etf_id} {as_of}: median price=${med_price:.4f}"
                 )
 
-        # Verify headline metrics are within sane bounds (catches 1,000x DPS or partial-revenue traps)
+        # Verify headline metrics are within sane bounds (catches 1,000x DPS, partial-revenue, and near-zero equity traps)
         bad_metrics = conn.execute(
             """
-            SELECT security_id, ttm_yield, gross_margin
+            SELECT security_id, ttm_yield, gross_margin, roe, roic
             FROM stock_metrics
             WHERE (ttm_yield IS NOT NULL AND (ttm_yield < 0 OR ttm_yield > 1.0))
                OR (gross_margin IS NOT NULL AND (gross_margin > 1.05 OR gross_margin < -2.0))
+               OR (roe IS NOT NULL AND ABS(roe) > 5.0)
+               OR (roic IS NOT NULL AND ABS(roic) > 5.0)
             """
         ).fetchall()
-        for sec_id, yld, gm in bad_metrics:
+        for sec_id, yld, gm, roe_v, roic_v in bad_metrics:
             errors.append(
-                f"[DB] Out-of-range metric for {sec_id}: ttm_yield={yld}, gross_margin={gm}"
+                f"[DB] Out-of-range metric for {sec_id}: "
+                f"ttm_yield={yld}, gross_margin={gm}, roe={roe_v}, roic={roic_v}"
             )
 
         # Verify no placeholder 0.0 values for share counts or total assets
@@ -553,6 +556,11 @@ def check_dist_json(errors: list[str]) -> str:
             if meta_doc.get("stock_shard_count") != len(shard_docs):
                 errors.append(
                     f"[DIST] meta.stock_shard_count={meta_doc.get('stock_shard_count')} != {len(shard_docs)}"
+                )
+            search_active_doc = parsed_by_rel.get("data/stocks/search-active.json")
+            if not isinstance(search_active_doc, list) or len(search_active_doc) != len(active_keys):
+                errors.append(
+                    "[DIST] Missing or mismatched data/stocks/search-active.json count"
                 )
             for etf_m in meta_doc.get("etfs") or []:
                 eid = etf_m.get("etf_id")

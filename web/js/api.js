@@ -79,6 +79,10 @@ export function getCompareOverview() {
   return fetchJson("data/compare/overview.json");
 }
 
+export function getSearchActiveIndex() {
+  return fetchJson("data/stocks/search-active.json");
+}
+
 export function getActiveStocksIndex() {
   return fetchJson("data/stocks/index-active.json");
 }

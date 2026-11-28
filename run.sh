@@ -69,20 +69,24 @@ case "$CMD" in
   schedule)
     exec bash "$ROOT_DIR/scripts/schedule_launchd.sh" "$@"
     ;;
+  compact-cache)
+    exec "$PYTHON_BIN" -m src.compact_cache "$@"
+    ;;
   *)
     cat <<'EOF'
 Usage: ./run.sh <command>
 
 Commands:
-  build      Run full pipeline (fetch SEC filings -> XBRL -> metrics -> export dist/)
-  export     Re-export dist/ (web assets + split JSON) from existing SQLite DB
-  check      Run data integrity checks + secret/PII leak scan + unit tests
-  test       Run unit test suite (tests/)
-  refresh    Incremental SEC refresh + check (add --deploy to upload if changed; --full for full rebuild)
-  schedule   Manage local macOS launchd periodic refresh (install|status|run-now|uninstall)
-  init-db    Initialize local SQLite database (data/market.db)
-  serve      Start local HTTP server with production CSP headers
-  deploy     Upload dist/ to Cloudflare Pages via Direct Upload API
+  build          Run full pipeline (fetch SEC filings -> XBRL -> metrics -> export dist/)
+  export         Re-export dist/ (web assets + split JSON) from existing SQLite DB
+  check          Run data integrity checks + secret/PII leak scan + unit tests
+  test           Run unit test suite (tests/)
+  refresh        Incremental SEC refresh + check (add --deploy to upload if changed; --full for full rebuild)
+  schedule       Manage local macOS launchd periodic refresh (install|status|run-now|uninstall)
+  compact-cache  Compress legacy uncompressed CompanyFacts JSON cache files to .json.gz
+  init-db        Initialize local SQLite database (data/market.db)
+  serve          Start local HTTP server with production CSP headers
+  deploy         Upload dist/ to Cloudflare Pages via Direct Upload API
 EOF
     ;;
 esac

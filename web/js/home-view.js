@@ -1,23 +1,20 @@
 /**
- * Home View (#/) — ETF X-Ray landing page.
- * - Hero overview with quick search & platform stats
- * - Covered ETF comparison cards with latest metrics & top-5 holdings preview
- * - Multi-ETF consensus stocks & dividend streak leaders
- * - Public data methodology summary
+ * Home View (#/) — Minimalist U.S. ETF directory and notable securities overview.
+ * Renders directly from meta.json without requiring the full active metrics index.
  */
 
-import { getStocksIndex } from "./api.js";
 import { destroyAllCharts } from "./charts.js";
 import {
   clearNode,
   el,
+  fmtInt,
   fmtMultiple,
   fmtPct,
   fmtStreak,
   fmtUsdCompact,
 } from "./dom.js";
 
-function renderHeroSection(meta, stocksList, navigate) {
+function renderHeader(meta) {
   const etfs = meta.etfs || [];
   const totalQuarters = etfs.reduce((sum, e) => sum + (e.date_count || 0), 0);
   const firstYear = etfs.reduce((min, e) => {
@@ -29,351 +26,176 @@ function renderHeroSection(meta, stocksList, navigate) {
     return y && (!max || y > max) ? y : max;
   }, null);
 
-  // Build quick-jump ticker buttons from stocks present in the dataset
-  const stockById = new Map(stocksList.map((s) => [s.security_id, s]));
-  const sampleIds = ["KO", "MSFT", "AVGO", "JNJ", "PEP", "CVX", "AAPL", "PG"].filter((id) =>
-    stockById.has(id)
-  );
+  const span = firstYear && latestYear ? `${firstYear}–${latestYear}` : "—";
+  const tracked = meta.stock_count != null ? fmtInt(meta.stock_count) : "—";
 
-  // Inline hero search box
-  const searchInput = el("input", {
-    type: "search",
-    className: "home-search-input",
-    placeholder: "Search any stock by ticker or company (e.g. KO, AVGO, Merck)...",
-    autocomplete: "off",
-    "aria-label": "Search stocks from home page",
-  });
-  const searchDropdown = el("div", {
-    className: "search-dropdown hidden",
-    role: "listbox",
-  });
-
-  let searchableStocks = stocksList;
-  let fullSearchLoaded = searchableStocks.length >= (meta.stock_count || 0);
-
-  function closeDropdown() {
-    searchDropdown.classList.add("hidden");
-  }
-
-  function warmFullSearch() {
-    if (fullSearchLoaded) return;
-    fullSearchLoaded = true;
-    getStocksIndex()
-      .then((fullMap) => {
-        searchableStocks = Object.values(fullMap);
-        if (document.activeElement === searchInput && searchInput.value.trim()) {
-          renderResults(searchInput.value);
-        }
-      })
-      .catch(() => {
-        fullSearchLoaded = false;
-      });
-  }
-
-  function renderResults(query) {
-    clearNode(searchDropdown);
-    const q = query.trim().toLowerCase();
-    if (!q) {
-      closeDropdown();
-      return;
-    }
-    const matches = searchableStocks
-      .filter(
-        (s) =>
-          (s.ticker || "").toLowerCase().includes(q) ||
-          (s.name || "").toLowerCase().includes(q)
-      )
-      .sort((a, b) => {
-        const at = (a.ticker || "").toLowerCase();
-        const bt = (b.ticker || "").toLowerCase();
-        const aExact = at === q ? 0 : at.startsWith(q) ? 1 : 2;
-        const bExact = bt === q ? 0 : bt.startsWith(q) ? 1 : 2;
-        if (aExact !== bExact) return aExact - bExact;
-        return (b.current_etfs?.length || 0) - (a.current_etfs?.length || 0);
-      })
-      .slice(0, 10);
-
-    if (matches.length === 0) {
-      searchDropdown.appendChild(
-        el("div", { className: "search-item text-muted", text: "No matching securities" })
-      );
-    } else {
-      for (const s of matches) {
-        const etfTag =
-          s.current_etfs && s.current_etfs.length > 0
-            ? el("span", { className: "badge badge-green", text: s.current_etfs.join(", ") })
-            : el("span", { className: "badge badge-slate", text: "Former" });
-        const yieldTag =
-          s.ttm_yield !== null && s.ttm_yield !== undefined
-            ? el("span", {
-                className: "num text-muted",
-                text: `Yield ${fmtPct(s.ttm_yield, 2)}`,
-                title: s.latest_price_date
-                  ? `TTM dividend yield based on implied price as of ${s.latest_price_date}`
-                  : "TTM dividend yield",
-              })
-            : null;
-        searchDropdown.appendChild(
-          el(
-            "div",
-            {
-              className: "search-item",
-              role: "option",
-              onClick: () => {
-                searchInput.value = "";
-                closeDropdown();
-                navigate(`#/stock/${encodeURIComponent(s.security_id)}`);
-              },
-            },
-            [
-              el("div", { className: "search-item-main" }, [
-                el("span", { className: "ticker-pill", text: s.ticker || s.security_id }),
-                el("span", { className: "search-item-name", text: s.name }),
-              ]),
-              el("div", { className: "toolbar-group" }, [yieldTag, etfTag]),
-            ]
-          )
-        );
-      }
-    }
-    searchDropdown.classList.remove("hidden");
-  }
-
-  searchInput.addEventListener("input", (e) => {
-    renderResults(e.target.value);
-    warmFullSearch();
-  });
-  searchInput.addEventListener("focus", (e) => {
-    warmFullSearch();
-    if (e.target.value.trim()) renderResults(e.target.value);
-  });
-  searchInput.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      closeDropdown();
-      searchInput.blur();
-    } else if (e.key === "Enter") {
-      const first = searchDropdown.querySelector(".search-item[role='option']");
-      if (first) first.click();
-    }
-  });
-
-  const searchBox = el("div", { className: "home-search-wrap" }, [searchInput, searchDropdown]);
-  const handleOutsideClick = (e) => {
-    if (!searchBox.contains(e.target)) {
-      closeDropdown();
-    }
-  };
-  document.addEventListener("click", handleOutsideClick);
-
-  const quickChips = el(
-    "div",
-    { className: "home-quick-row" },
-    [
-      el("span", { className: "home-quick-label", text: "Quick jump:" }),
-      ...sampleIds.map((id) =>
-        el("a", {
-          href: `#/stock/${encodeURIComponent(id)}`,
-          className: "home-quick-chip",
-          text: id,
-        })
-      ),
-    ]
-  );
-
-  const statsStrip = el("div", { className: "home-stats-grid" }, [
-    el("div", { className: "home-stat" }, [
-      el("div", { className: "home-stat-value", text: String(etfs.length) }),
-      el("div", { className: "home-stat-label", text: "Covered ETFs" }),
-    ]),
-    el("div", { className: "home-stat" }, [
-      el("div", { className: "home-stat-value", text: totalQuarters.toLocaleString("en-US") }),
-      el("div", { className: "home-stat-label", text: "Quarterly Filings" }),
-    ]),
-    el("div", { className: "home-stat" }, [
-      el("div", {
-        className: "home-stat-value",
-        text: (meta.stock_count ?? stocksList.length).toLocaleString("en-US"),
-      }),
-      el("div", { className: "home-stat-label", text: "Tracked Securities" }),
-    ]),
-    el("div", { className: "home-stat" }, [
-      el("div", {
-        className: "home-stat-value",
-        text: firstYear && latestYear ? `${firstYear}–${latestYear}` : "—",
-      }),
-      el("div", { className: "home-stat-label", text: "Historical Coverage" }),
-    ]),
+  return el("header", { className: "home-header" }, [
+    el("h1", { className: "home-title", text: "U.S. ETF Holdings & SEC Fundamentals" }),
+    el("p", {
+      className: "home-meta-line",
+      text: `${etfs.length} ETFs · ${fmtInt(totalQuarters)} SEC filings · ${tracked} tracked securities · ${span}`,
+    }),
   ]);
-
-  const heroEl = el("section", { className: "home-hero" }, [
-    el("div", { className: "home-hero-top" }, [
-      el("h1", {
-        className: "home-hero-title",
-        text: "U.S. ETF Holdings History & Stock Fundamentals",
-      }),
-      el("p", {
-        className: "home-hero-desc",
-        text:
-          "Explore historical ETF constituents, quarterly additions and removals, holding tenure heatmaps, " +
-          "and split-adjusted 10-K/10-Q fundamentals and dividend streaks.",
-      }),
-    ]),
-    searchBox,
-    quickChips,
-    statsStrip,
-  ]);
-
-  return {
-    heroEl,
-    cleanup: () => document.removeEventListener("click", handleOutsideClick),
-  };
 }
 
-function renderEtfCardsSection(meta, navigate) {
-  const etfs = meta.etfs || [];
-  const cards = etfs.map((etf) => {
-    const spanText =
-      etf.first_as_of && etf.latest_as_of
-        ? `${etf.first_as_of.slice(0, 4)}–${etf.latest_as_of.slice(0, 4)}`
-        : "—";
+function renderEtfDirectory(meta, navigate) {
+  const etfs = [...(meta.etfs || [])];
+  const section = el("section", { className: "home-section" });
+  const card = el("div", { className: "card" });
+  const tableWrap = el("div", { className: "table-scroll" });
 
-    const topHoldings = Array.isArray(etf.top_holdings) ? etf.top_holdings : [];
-    const maxWeight = topHoldings.reduce((m, h) => Math.max(m, h.weight || 0), 0.01);
-    const topRows = topHoldings.map((h) => {
-      const ratio = Math.min(1, Math.max(0.05, (h.weight || 0) / maxWeight));
-      const prog = el("progress", {
-        className: "etf-top-progress",
-        max: "100",
-        value: String(Math.round(ratio * 100)),
-        ariaLabel: `${h.ticker || h.security_id} weight ${fmtPct(h.weight, 2)}`,
-      });
-      return el(
-        "a",
-        {
-          href: `#/stock/${encodeURIComponent(h.security_id)}`,
-          className: "etf-top-row",
-          onClick: (e) => {
-            e.stopPropagation();
-          },
-        },
-        [
-          el("span", { className: "ticker-pill", text: h.ticker || h.security_id }),
-          el("span", { className: "etf-top-name", text: h.name, title: h.name }),
-          prog,
-          el("span", { className: "etf-top-weight num", text: fmtPct(h.weight, 2) }),
-        ]
-      );
+  const state = {
+    sortKey: "etf_id",
+    sortDir: 1,
+  };
+
+  const columns = [
+    { key: "etf_id", label: "ETF", num: false, get: (e) => e.etf_id },
+    { key: "name", label: "Fund", num: false, get: (e) => e.name },
+    { key: "issuer", label: "Issuer", num: false, get: (e) => e.issuer },
+    { key: "latest_est_yield", label: "Est. Yield", num: true, get: (e) => e.latest_est_yield },
+    { key: "latest_holdings_count", label: "Holdings", num: true, get: (e) => e.latest_holdings_count },
+    { key: "latest_total_value_usd", label: "Equity Value", num: true, get: (e) => e.latest_total_value_usd },
+    { key: "top", label: "Top Holdings", num: false, sortable: false },
+    { key: "first_as_of", label: "Coverage", num: true, get: (e) => e.date_count },
+    { key: "latest_as_of", label: "Latest Filing", num: true, get: (e) => e.latest_as_of },
+  ];
+
+  function renderTable() {
+    clearNode(tableWrap);
+    const sortCol = columns.find((c) => c.key === state.sortKey) || columns[0];
+    const sorted = [...etfs].sort((a, b) => {
+      const va = sortCol.get ? sortCol.get(a) : null;
+      const vb = sortCol.get ? sortCol.get(b) : null;
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === "string" && typeof vb === "string") {
+        return va.localeCompare(vb) * state.sortDir;
+      }
+      return (Number(va) - Number(vb)) * state.sortDir;
     });
 
-    const card = el(
-      "article",
-      {
-        className: "etf-card",
-        onClick: () => navigate(`#/etf/${encodeURIComponent(etf.etf_id)}`),
-      },
-      [
-        el("div", { className: "etf-card-head" }, [
-          el("div", { className: "etf-card-id-row" }, [
-            el("span", { className: "etf-card-ticker", text: etf.etf_id }),
-            el("span", { className: "badge badge-slate", text: etf.issuer }),
-          ]),
-          el("h3", { className: "etf-card-name", text: etf.name }),
-        ]),
-        el("div", { className: "etf-card-metrics" }, [
-          el("div", { className: "etf-mini-metric" }, [
-            el("div", { className: "etf-mini-label", text: "Est. Yield" }),
-            el("div", {
-              className: "etf-mini-value text-pos",
-              text: fmtPct(etf.latest_est_yield, 2),
-            }),
-          ]),
-          el("div", { className: "etf-mini-metric" }, [
-            el("div", { className: "etf-mini-label", text: "Holdings" }),
-            el("div", {
-              className: "etf-mini-value",
-              text: String(etf.latest_holdings_count ?? "—"),
-            }),
-          ]),
-          el("div", { className: "etf-mini-metric" }, [
-            el("div", { className: "etf-mini-label", text: "Equity Value" }),
-            el("div", {
-              className: "etf-mini-value",
-              text: fmtUsdCompact(etf.latest_total_value_usd),
-            }),
-          ]),
-          el("div", { className: "etf-mini-metric" }, [
-            el("div", { className: "etf-mini-label", text: "History" }),
-            el("div", {
-              className: "etf-mini-value",
-              text: `${spanText} (${etf.date_count}Q)`,
-            }),
-          ]),
-        ]),
-        topRows.length > 0
-          ? el("div", { className: "etf-top-list" }, [
-              el("div", { className: "etf-top-heading", text: "Top 5 Holdings" }),
-              ...topRows,
-            ])
-          : null,
-        el("div", { className: "etf-card-footer" }, [
-          el("span", { className: "text-muted", text: `Latest filing: ${etf.latest_as_of}` }),
-          el("span", { className: "etf-card-cta", text: "Open ETF View →" }),
-        ]),
-      ]
-    );
-    return card;
-  });
+    const thead = el("thead", {}, [
+      el(
+        "tr",
+        {},
+        columns.map((col) => {
+          if (col.sortable === false) {
+            return el("th", { text: col.label });
+          }
+          const isSorted = state.sortKey === col.key;
+          const arrow = isSorted ? (state.sortDir === 1 ? " ↑" : " ↓") : "";
+          return el("th", {
+            className: `${col.num ? "num " : ""}sortable${isSorted ? " sorted" : ""}`,
+            text: `${col.label}${arrow}`,
+            onClick: () => {
+              if (state.sortKey === col.key) {
+                state.sortDir *= -1;
+              } else {
+                state.sortKey = col.key;
+                state.sortDir = col.num ? -1 : 1;
+              }
+              renderTable();
+            },
+          });
+        })
+      ),
+    ]);
 
-  return el("section", { className: "home-section" }, [
-    el("div", { className: "home-section-head home-section-head-row" }, [
+    const tbody = el(
+      "tbody",
+      {},
+      sorted.map((etf) => {
+        const spanText =
+          etf.first_as_of && etf.latest_as_of
+            ? `${etf.first_as_of.slice(0, 4)}–${etf.latest_as_of.slice(0, 4)} (${etf.date_count}Q)`
+            : "—";
+
+        const topList = Array.isArray(etf.top_holdings) ? etf.top_holdings.slice(0, 3) : [];
+        const topNodes = [];
+        topList.forEach((h, idx) => {
+          if (idx > 0) topNodes.push(el("span", { className: "text-subtle", text: " · " }));
+          topNodes.push(
+            el("a", {
+              href: `#/stock/${encodeURIComponent(h.security_id)}`,
+              className: "inline-ticker-link",
+              title: `${h.name} (${fmtPct(h.weight, 2)})`,
+              text: `${h.ticker || h.security_id} ${fmtPct(h.weight, 1)}`,
+              onClick: (e) => e.stopPropagation(),
+            })
+          );
+        });
+
+        return el(
+          "tr",
+          {
+            className: "clickable-row",
+            onClick: () => navigate(`#/etf/${encodeURIComponent(etf.etf_id)}`),
+          },
+          [
+            el("td", {}, [el("span", { className: "ticker-pill", text: etf.etf_id })]),
+            el("td", { className: "company-cell", text: etf.name, title: etf.name }),
+            el("td", { className: "text-muted", text: etf.issuer }),
+            el("td", { className: "num", text: fmtPct(etf.latest_est_yield, 2) }),
+            el("td", { className: "num", text: fmtInt(etf.latest_holdings_count) }),
+            el("td", { className: "num", text: fmtUsdCompact(etf.latest_total_value_usd) }),
+            el("td", { className: "top-holdings-cell" }, topNodes.length > 0 ? topNodes : "—"),
+            el("td", { className: "num text-muted", text: spanText }),
+            el("td", { className: "num text-muted", text: etf.latest_as_of || "—" }),
+          ]
+        );
+      })
+    );
+
+    tableWrap.appendChild(el("table", { className: "data-table" }, [thead, tbody]));
+  }
+
+  card.appendChild(
+    el("div", { className: "card-header" }, [
       el("div", {}, [
-        el("h2", { className: "home-section-title", text: "Covered ETFs" }),
-        el("span", {
-          className: "home-section-sub",
-          text: "Select an ETF to explore historical constituents, rebalance turnover, and holding tenure. Latest reporting dates differ by fund (fiscal quarter-ends).",
+        el("h2", { className: "card-title", text: "Covered ETFs" }),
+        el("p", {
+          className: "card-subtitle",
+          text: "Click any ETF to view historical holdings, turnover, and holding tenure. Reporting dates follow each fund's fiscal quarter-end.",
         }),
       ]),
-      el("a", {
-        href: "#/compare",
-        className: "btn btn-sm home-compare-cta",
-        text: "Compare ETF Overlap →",
-        onClick: (e) => {
-          e.preventDefault();
-          navigate("#/compare");
-        },
-      }),
-    ]),
-    el("div", { className: "etf-card-grid" }, cards),
-  ]);
+      el("div", { className: "toolbar-group" }, [
+        el("a", {
+          href: "#/compare",
+          className: "btn btn-sm",
+          text: "Compare Overlap",
+          onClick: (e) => {
+            e.preventDefault();
+            navigate("#/compare");
+          },
+        }),
+        el("a", {
+          href: "#/screener",
+          className: "btn btn-sm",
+          text: "Stock Screener",
+          onClick: (e) => {
+            e.preventDefault();
+            navigate("#/screener");
+          },
+        }),
+      ]),
+    ])
+  );
+  card.appendChild(tableWrap);
+  renderTable();
+  section.appendChild(card);
+  return section;
 }
 
-function renderHighlightsSection(stocksList, navigate) {
-  const activeStocks = stocksList.filter((s) => s.current_etfs && s.current_etfs.length > 0);
+function renderHighlightsSection(meta, navigate) {
+  const highlights = meta.highlights || {};
+  const multiEtf = Array.isArray(highlights.multi_etf) ? highlights.multi_etf : [];
+  const divLeaders = Array.isArray(highlights.div_leaders) ? highlights.div_leaders : [];
 
-  // 1. Widely held across multiple covered ETFs
-  const multiEtf = [...activeStocks]
-    .filter((s) => s.current_etfs.length >= 3)
-    .sort((a, b) => {
-      if (b.current_etfs.length !== a.current_etfs.length) {
-        return b.current_etfs.length - a.current_etfs.length;
-      }
-      return (b.revenue_ttm || 0) - (a.revenue_ttm || 0);
-    })
-    .slice(0, 8);
-
-  // 2. Longest dividend non-cut streaks among currently held stocks
-  const divLeaders = [...activeStocks]
-    .filter((s) => s.div_streak_years && s.div_streak_years >= 10 && s.ttm_yield && s.ttm_yield > 0)
-    .sort((a, b) => {
-      if ((b.div_streak_years || 0) !== (a.div_streak_years || 0)) {
-        return (b.div_streak_years || 0) - (a.div_streak_years || 0);
-      }
-      if ((b.current_etfs?.length || 0) !== (a.current_etfs?.length || 0)) {
-        return (b.current_etfs?.length || 0) - (a.current_etfs?.length || 0);
-      }
-      return (b.div_cagr_5y || -999) - (a.div_cagr_5y || -999);
-    })
-    .slice(0, 8);
+  if (multiEtf.length === 0 && divLeaders.length === 0) {
+    return null;
+  }
 
   function buildMultiTable() {
     const tbody = el(
@@ -389,13 +211,13 @@ function renderHighlightsSection(stocksList, navigate) {
           [
             el("td", {}, [el("span", { className: "ticker-pill", text: s.ticker || s.security_id })]),
             el("td", { className: "company-cell", text: s.name, title: s.name }),
-            el("td", {}, [
-              el(
-                "div",
-                { className: "home-etf-badges" },
-                s.current_etfs.map((eid) => el("span", { className: "badge badge-blue", text: eid }))
-              ),
-            ]),
+            el("td", {
+              className: "etf-list-cell text-muted",
+              title: (s.current_etfs || []).join(", "),
+              text: `${(s.current_etfs || []).length} (${(s.current_etfs || []).slice(0, 4).join(", ")}${
+                (s.current_etfs || []).length > 4 ? "…" : ""
+              })`,
+            }),
             el("td", { className: "num", text: fmtPct(s.ttm_yield, 2) }),
             el("td", { className: "num", text: fmtMultiple(s.pe_ratio) }),
           ]
@@ -405,8 +227,8 @@ function renderHighlightsSection(stocksList, navigate) {
 
     return el("div", { className: "card home-highlight-card" }, [
       el("div", { className: "card-header" }, [
-        el("h3", { className: "card-title", text: "Held Across Multiple ETFs" }),
-        el("span", { className: "badge badge-blue", text: "3+ ETFs" }),
+        el("h3", { className: "card-title", text: "Widely Held Across ETFs" }),
+        el("span", { className: "text-muted", text: "3+ funds" }),
       ]),
       el("div", { className: "table-scroll" }, [
         el("table", { className: "data-table" }, [
@@ -449,8 +271,8 @@ function renderHighlightsSection(stocksList, navigate) {
 
     return el("div", { className: "card home-highlight-card" }, [
       el("div", { className: "card-header" }, [
-        el("h3", { className: "card-title", text: "Long Dividend Streaks" }),
-        el("span", { className: "badge badge-green", text: "SEC XBRL" }),
+        el("h3", { className: "card-title", text: "Longest Dividend Streaks" }),
+        el("span", { className: "text-muted", text: "SEC XBRL" }),
       ]),
       el("div", { className: "table-scroll" }, [
         el("table", { className: "data-table" }, [
@@ -470,71 +292,19 @@ function renderHighlightsSection(stocksList, navigate) {
   }
 
   return el("section", { className: "home-section" }, [
-    el("div", { className: "home-section-head home-section-head-row" }, [
-      el("div", {}, [
-        el("h2", { className: "home-section-title", text: "Notable Securities" }),
-        el("span", {
-          className: "home-section-sub",
-          text: "Click any stock to open full 10-K/10-Q charts, balance sheet trends, and ETF ownership history.",
-        }),
-      ]),
-      el("a", {
-        href: "#/screener",
-        className: "btn btn-sm home-compare-cta",
-        text: "Open Stock Screener →",
-        onClick: (e) => {
-          e.preventDefault();
-          navigate("#/screener");
-        },
-      }),
-    ]),
     el("div", { className: "home-highlights-grid" }, [buildMultiTable(), buildDivTable()]),
   ]);
 }
 
-function renderMethodologySection() {
-  const items = [
-    {
-      title: "SEC EDGAR Holdings",
-      body:
-        "Common equity long positions extracted from N-PORT-P XML (2019–present) and legacy " +
-        "N-Q / N-CSR / N-CSRS filings (2011–2019), reconciled against reported common stock totals.",
-    },
-    {
-      title: "Split-Adjusted XBRL",
-      body:
-        "Annual 10-K and quarterly 10-Q fundamentals from SEC CompanyFacts with chained split-factor " +
-        "inference across comparative filings and same-fiscal-year payout ratios.",
-    },
-    {
-      title: "Implied Quarter-End Prices",
-      body:
-        "Zero third-party market-data APIs. Quarter-end share prices are derived directly from " +
-        "reported ETF holding market values divided by share counts (Value ÷ Shares).",
-    },
-  ];
-
-  return el("section", { className: "home-section" }, [
-    el("div", { className: "home-method-grid" }, [
-      ...items.map((item) =>
-        el("div", { className: "home-method-card" }, [
-          el("h3", { className: "home-method-title", text: item.title }),
-          el("p", { className: "home-method-body", text: item.body }),
-        ])
-      ),
-    ]),
-  ]);
-}
-
-export async function renderHomeView(rootEl, meta, stocksList, navigate) {
+export async function renderHomeView(rootEl, meta, _unusedList, navigate) {
   destroyAllCharts();
   clearNode(rootEl);
 
-  const { heroEl, cleanup } = renderHeroSection(meta, stocksList, navigate);
-  rootEl.appendChild(heroEl);
-  rootEl.appendChild(renderEtfCardsSection(meta, navigate));
-  rootEl.appendChild(renderHighlightsSection(stocksList, navigate));
-  rootEl.appendChild(renderMethodologySection());
-
-  return cleanup;
+  rootEl.appendChild(renderHeader(meta));
+  rootEl.appendChild(renderEtfDirectory(meta, navigate));
+  const highlights = renderHighlightsSection(meta, navigate);
+  if (highlights) {
+    rootEl.appendChild(highlights);
+  }
+  return null;
 }

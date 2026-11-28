@@ -12,15 +12,16 @@
     <div class="container topbar-inner">
       <div class="brand-group">
         <a href="#/" class="brand" id="brand-link">
-          <span class="brand-mark">X</span>
           <span class="brand-text">ETF X-Ray</span>
         </a>
         <label class="etf-switcher-wrap" for="etf-switcher">
           <span class="sr-only">Select ETF</span>
           <select id="etf-switcher" class="select-control" aria-label="Select ETF"></select>
         </label>
-        <a href="#/compare" class="nav-pill" id="nav-compare-link">Compare</a>
-        <a href="#/screener" class="nav-pill" id="nav-screener-link">Screener</a>
+        <nav class="top-nav" aria-label="Primary">
+          <a href="#/compare" class="nav-link" id="nav-compare-link">Compare</a>
+          <a href="#/screener" class="nav-link" id="nav-screener-link">Screener</a>
+        </nav>
       </div>
 
       <div class="search-wrap" id="global-search-wrap">
@@ -28,14 +29,17 @@
           type="search"
           id="global-search-input"
           class="search-input"
-          placeholder="Search ticker or company (e.g. KO, AVGO, Merck)..."
+          placeholder="Search ticker or company... (/)"
           autocomplete="off"
           aria-label="Search stocks"
         >
         <div id="global-search-results" class="search-dropdown hidden" role="listbox"></div>
       </div>
 
-      <div id="topbar-context" class="topbar-context hidden"></div>
+      <div class="topbar-right">
+        <div id="topbar-context" class="topbar-context hidden"></div>
+        <button type="button" id="theme-toggle" class="btn btn-sm theme-toggle" aria-label="Toggle color theme">Dark</button>
+      </div>
     </div>
   </header>
 
@@ -46,7 +50,7 @@
   <footer class="footer">
     <div class="container footer-inner" id="app-footer">
       <p class="footer-note">
-        Data sources: SEC EDGAR (N-PORT-P, N-CSR, N-CSRS, N-Q, 10-K/10-Q XBRL) &amp; OpenFIGI.
+        Data sources: SEC EDGAR (N-PORT-P, N-CSR, N-CSRS, N-Q, N-30D, 10-K/10-Q XBRL) &amp; OpenFIGI.
         Quarter-end prices are implied from ETF holdings (Value &divide; Shares). For informational purposes only.
       </p>
     </div>
